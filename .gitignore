@@ -1,0 +1,17 @@
+venv/
+__pycache__/
+*.pyc
+*.wav
+*.mp3
+.env
+.DS_Store
+# Ignorar modelos grandes si los hay descargados localmente
+*.pt
+*.safetensors
+*.bin
+# F5-TTS es un repo clonado, si queremos subirlo como parte del código fuente deberíamos quitarle su carpeta .git o usar submodulos.
+# Por simplicidad para el usuario, a menudo es mejor ignorarlo y pedir que se instale, o si es crítico, manejarlo.
+# Voy a asumir que el usuario quiere subir SU código. F5-TTS es una dependencia externa.
+# Sin embargo, si el usuario quiere "todo" para que funcione, quizás quiera subirlo.
+# Pero Github tiene limite de 100MB.
+# Verificaré si F5-TTS tiene archivos grandes.

@@ -43,9 +43,12 @@
         }
     }, 500);
 
-    // 2. Conexión WebSocket (Automática para Proxy o Local)
+    // 2. Conexión WebSocket
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+    // Si estás abriendo el archivo HTML directamente (file://), usa localhost explícitamente
+    const host = window.location.host || "localhost:8000"; 
+    const ws = new WebSocket(`${protocol}//${host}/ws`);
+    ws.binaryType = "arraybuffer"; // Recibir datos binarios puros
 
     ws.onopen = () => { statusText.innerText = "Conectado. Pulsa el botón."; };
     ws.onclose = () => { statusText.innerText = "Desconectado."; };
@@ -54,15 +57,35 @@
         indicator.className = "indicator";
         statusText.innerText = "Sarah está hablando...";
         
-        const blob = new Blob([event.data], { type: 'audio/wav' });
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        await audio.play();
-        
-        audio.onended = () => {
-            statusText.innerText = "Sarah te escucha.";
-            indicator.className = "indicator";
-        };
+        console.log("Mensaje recibido. Tipo:", typeof event.data);
+
+        if (event.data instanceof ArrayBuffer) {
+            console.log("Tamaño del audio recibido:", event.data.byteLength);
+            
+            if (event.data.byteLength === 0) {
+                console.error("Recibido buffer de audio vacío.");
+                statusText.innerText = "Error: Audio vacío.";
+                return;
+            }
+
+            const blob = new Blob([event.data], { type: 'audio/wav' });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            
+            try {
+                await audio.play();
+            } catch (e) {
+                console.error("Error al reproducir audio:", e);
+                statusText.innerText = "Error reproducción: " + e.message;
+            }
+            
+            audio.onended = () => {
+                statusText.innerText = "Sarah te escucha.";
+                indicator.className = "indicator";
+            };
+        } else {
+            console.warn("Se recibió texto en lugar de audio:", event.data);
+        }
     };
 
     // 3. Lógica VAD (Captura por frases, no por paquetes)

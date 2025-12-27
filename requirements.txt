@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+faster-whisper
+numpy
+scipy
+websockets
+torch
+torchaudio
+groq
+python-dotenv
+./F5-TTS
