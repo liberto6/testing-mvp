@@ -34,12 +34,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 # 1. INICIALIZACIÓN ROBUSTA
-print("Cargando Whisper (STT) en CPU...")
-stt_model = WhisperModel("tiny", device="cpu", compute_type="int8")
-
-print("Cargando F5-TTS...")
-# Aseguramos que F5-TTS use la GPU si está disponible
+print("Configurando dispositivo...")
 device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Dispositivo seleccionado: {device}")
+
+if device == "cuda":
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print(f"VRAM disponible: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+
+print(f"Cargando Whisper (STT) en {device}...")
+# Usamos float16 si estamos en CUDA para mayor velocidad, int8 en CPU
+compute_type = "float16" if device == "cuda" else "int8"
+stt_model = WhisperModel("small", device=device, compute_type=compute_type)
+
+print(f"Cargando F5-TTS en {device}...")
 tts = F5TTS(device=device)
 
 # Rutas dinámicas
