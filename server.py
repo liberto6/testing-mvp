@@ -5,6 +5,18 @@ import uvicorn
 import time
 from dotenv import load_dotenv
 
+# 0. CONFIGURACIÓN DE CACHÉ (CRÍTICO PARA PODS)
+# Forzamos el uso del disco grande (/workspace) si existe, para evitar llenar el root
+if os.path.exists("/workspace"):
+    print("✅ Entorno RunPod detectado. Redirigiendo caché a /workspace/cache...")
+    os.makedirs("/workspace/cache/huggingface", exist_ok=True)
+    os.makedirs("/workspace/cache/torch", exist_ok=True)
+    os.environ["HF_HOME"] = "/workspace/cache/huggingface"
+    os.environ["TORCH_HOME"] = "/workspace/cache/torch"
+    os.environ["XDG_CACHE_HOME"] = "/workspace/cache"
+else:
+    print("ℹ️ Entorno local o sin /workspace detectado. Usando caché por defecto.")
+
 load_dotenv() # Cargar variables de entorno desde .env
 
 from groq import Groq
