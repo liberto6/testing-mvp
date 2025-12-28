@@ -1,24 +1,9 @@
 import os
-import time
-from dotenv import load_dotenv
-
-# 0. CONFIGURACIÓN DE CACHÉ (CRÍTICO PARA PODS)
-# Esto DEBE ejecutarse antes de importar torch/transformers para que tenga efecto
-if os.path.exists("/workspace"):
-    print("✅ Entorno RunPod detectado. Redirigiendo caché a /workspace/cache...")
-    os.makedirs("/workspace/cache/huggingface", exist_ok=True)
-    os.makedirs("/workspace/cache/torch", exist_ok=True)
-    os.environ["HF_HOME"] = "/workspace/cache/huggingface"
-    os.environ["TORCH_HOME"] = "/workspace/cache/torch"
-    os.environ["XDG_CACHE_HOME"] = "/workspace/cache"
-else:
-    print("ℹ️ Entorno local o sin /workspace detectado. Usando caché por defecto.")
-
-# Ahora sí importamos las librerías pesadas
 import torch
 import numpy as np
 import uvicorn
-import scipy.io.wavfile as wavfile
+import time
+from dotenv import load_dotenv
 
 load_dotenv() # Cargar variables de entorno desde .env
 
@@ -60,7 +45,7 @@ if device == "cuda":
 print(f"Cargando Whisper (STT) en {device}...")
 # Usamos float16 si estamos en CUDA para mayor velocidad, int8 en CPU
 compute_type = "float16" if device == "cuda" else "int8"
-stt_model = WhisperModel("tiny", device=device, compute_type=compute_type)
+stt_model = WhisperModel("small", device=device, compute_type=compute_type)
 
 print(f"Cargando F5-TTS en {device}...")
 tts = F5TTS(device=device)
