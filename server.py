@@ -60,7 +60,7 @@ if device == "cuda":
 print(f"Cargando Whisper (STT) en {device}...")
 # Usamos float16 si estamos en CUDA para mayor velocidad, int8 en CPU
 compute_type = "float16" if device == "cuda" else "int8"
-stt_model = WhisperModel("small", device=device, compute_type=compute_type)
+stt_model = WhisperModel("tiny", device=device, compute_type=compute_type)
 
 print(f"Cargando F5-TTS en {device}...")
 tts = F5TTS(device=device)
