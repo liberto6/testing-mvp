@@ -1,11 +1,11 @@
 fastapi
 uvicorn
-faster-whisper
+websockets
+requests
 numpy
 scipy
-websockets
+soundfile
+faster-whisper
 torch
 torchaudio
-groq
-python-dotenv
-./F5-TTS
+#./F5-TTS

@@ -3,11 +3,15 @@ import torch
 import numpy as np
 import uvicorn
 import time
+import asyncio
+import io
+import re
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 
 load_dotenv() # Cargar variables de entorno desde .env
 
-from groq import Groq
+from groq import AsyncGroq
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from faster_whisper import WhisperModel
@@ -15,15 +19,12 @@ from f5_tts.api import F5TTS
 from fastapi.middleware.cors import CORSMiddleware
 import scipy.io.wavfile as wavfile
 
-# Inicializar cliente Groq
+# Inicializar cliente Groq Asíncrono
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     print("⚠️ ADVERTENCIA: No se encontró la variable de entorno GROQ_API_KEY.")
-    print("   Por favor, configura tu API Key en un archivo .env o en las variables del sistema.")
-    # Fallback para pruebas locales (Opcional: eliminar antes de producción si es crítico)
-    # GROQ_API_KEY = "tu_api_key_aqui" 
-
-client = Groq(api_key=GROQ_API_KEY)
+    
+client = AsyncGroq(api_key=GROQ_API_KEY)
 
 app = FastAPI()
 app.add_middleware(
@@ -33,29 +34,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# 1. INICIALIZACIÓN ROBUSTA
-print("Configurando dispositivo...")
-device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Dispositivo seleccionado: {device}")
 
-if device == "cuda":
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"VRAM disponible: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
-
-print(f"Cargando Whisper (STT) en {device}...")
-# Usamos float16 si estamos en CUDA para mayor velocidad, int8 en CPU
-compute_type = "float16" if device == "cuda" else "int8"
-stt_model = WhisperModel("small", device=device, compute_type=compute_type)
-
-print(f"Cargando F5-TTS en {device}...")
-tts = F5TTS(device=device)
-
-# Rutas dinámicas
-import os
+# --- CONFIGURACIÓN GLOBAL ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Rutas de referencia (Ajusta estas rutas a tus archivos reales)
-# Usamos el audio de ejemplo que viene dentro del repo clonado F5-TTS
 REF_AUDIO = os.path.join(BASE_DIR, "F5-TTS", "src", "f5_tts", "infer", "examples", "basic", "basic_ref_en.wav")
 REF_TEXT = "Some call me nature, others call me mother nature"
 
@@ -67,10 +48,129 @@ Rules:
 3. If the user makes a mistake in English, politely correct them before continuing the conversation.
 4. Keep your answers concise and friendly.
 """
+
+# --- INICIALIZACIÓN DE MODELOS ---
+print("Configurando dispositivo...")
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Dispositivo seleccionado: {device}")
+
+if device == "cuda":
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+
+# 1. STT (Whisper) - CPU
+# Usamos int8 en CPU para STT como estaba configurado
+print(f"Cargando Whisper (STT) en CPU...")
+stt_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+
+# 2. TTS (F5-TTS) - GPU/CPU
+print(f"Cargando F5-TTS en {device}...")
+tts = F5TTS(device=device)
+
+# Executor para tareas bloqueantes (STT y TTS)
+# Max workers limitado para no saturar CPU/GPU
+executor = ThreadPoolExecutor(max_workers=3) 
+
+# --- FUNCIONES DE AYUDA (NO BLOQUEANTES) ---
+
+async def run_stt(audio_np):
+    """Ejecuta Whisper en un hilo separado para no bloquear el loop de eventos."""
+    loop = asyncio.get_running_loop()
+    # Whisper transcribe es bloqueante
+    result = await loop.run_in_executor(executor, _execute_whisper, audio_np)
+    return result
+
+def _execute_whisper(audio_np):
+    segments, _ = stt_model.transcribe(audio_np, language="en")
+    return " ".join([s.text for s in segments]).strip()
+
+async def run_tts(text):
+    """Ejecuta F5-TTS en un hilo separado."""
+    if not text.strip():
+        return None
+    
+    loop = asyncio.get_running_loop()
+    wav_bytes = await loop.run_in_executor(executor, _execute_tts, text)
+    return wav_bytes
+
+def _execute_tts(text):
+    try:
+        # F5-TTS infer devuelve: audio (numpy), sr, spectr
+        # Pasamos file_wave=None para que no escriba en disco
+        audio, sr, _ = tts.infer(
+            gen_text=text,
+            ref_file=REF_AUDIO,
+            ref_text=REF_TEXT,
+            file_wave=None, 
+            file_spec=None
+        )
+        
+        if len(audio) == 0:
+            return None
+
+        # Convertir a Int16
+        audio = (audio * 32767).clip(-32768, 32767).astype(np.int16)
+        
+        # Escribir a memoria (BytesIO) en lugar de disco
+        byte_io = io.BytesIO()
+        wavfile.write(byte_io, sr, audio)
+        return byte_io.getvalue()
+    except Exception as e:
+        print(f"❌ Error en TTS Worker: {e}")
+        return None
+
+# --- MANEJO DE FLUJO DE LLM ---
+
+async def stream_sentences(user_text):
+    """
+    Genera respuesta del LLM y cede oraciones completas lo más rápido posible.
+    """
+    try:
+        completion = await client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_text}
+            ],
+            model="llama-3.3-70b-versatile",
+            stream=True
+        )
+
+        buffer = ""
+        # Regex simple para detectar finales de oración (. ! ?)
+        # Cuidado con abreviaciones, pero para MVP funciona bien
+        sentence_endings = re.compile(r'(?<=[.!?])\s+')
+
+        async for chunk in completion:
+            content = chunk.choices[0].delta.content
+            if content:
+                buffer += content
+                
+                # Intentar dividir por oraciones
+                parts = sentence_endings.split(buffer)
+                
+                # Si hay más de una parte, es que encontramos un delimitador
+                if len(parts) > 1:
+                    # Todo menos el último fragmento son oraciones completas
+                    for sentence in parts[:-1]:
+                        if sentence.strip():
+                            yield sentence.strip()
+                    
+                    # El último fragmento es el comienzo de la siguiente oración
+                    buffer = parts[-1]
+        
+        # Rendir lo que quede en el buffer al final
+        if buffer.strip():
+            yield buffer.strip()
+
+    except Exception as e:
+        print(f"⚠️ Error Groq Stream: {e}")
+        yield "Sorry, I had an error."
+
+# --- RUTAS ---
+
 @app.get("/")
 async def get_index():
     return FileResponse(os.path.join(BASE_DIR, "index.html"))
-    
+
 @app.get("/ort-wasm-simd.wasm")
 async def get_wasm_simd():
     return FileResponse(os.path.join(BASE_DIR, "ort-wasm-simd.wasm"), media_type="application/wasm")
@@ -78,12 +178,11 @@ async def get_wasm_simd():
 @app.get("/ort-wasm.wasm")
 async def get_wasm_basic():
     return FileResponse(os.path.join(BASE_DIR, "ort-wasm.wasm"), media_type="application/wasm")
-# Servir el modelo ONNX con el MIME type correcto
+
 @app.get("/silero_vad.onnx")
 async def get_model():
     return FileResponse(os.path.join(BASE_DIR, "silero_vad.onnx"), media_type="application/octet-stream")
 
-# Servir los archivos JS y Worklets
 @app.get("/vad.js")
 async def get_vad():
     return FileResponse(os.path.join(BASE_DIR, "vad.js"), media_type="application/javascript")
@@ -99,105 +198,57 @@ async def get_worklet_v2():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("🚀 Pipeline conectado y listo.")
+    print("🚀 Pipeline Streaming conectado.")
     
     try:
         while True:
-            # A. RECIBIR AUDIO
+            # 1. RECIBIR AUDIO (Esperar datos)
             data = await websocket.receive_bytes()
             
-            # DIAGNÓSTICO 1: ¿Llegan bytes?
-            print(f"DEBUG: Bytes recibidos del VAD: {len(data)}")
-
-            if len(data) == 0:
-                print("DEBUG: Buffer vacío, saltando...")
-                continue
+            if len(data) == 0: continue
             
-            # Convertir a numpy
+            # 2. STT (Procesar entrada)
+            # Convertir bytes a numpy
             audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
             
-            # DIAGNÓSTICO 2: ¿Hay sonido o es silencio absoluto?
+            # Verificar si hay señal
             amplitude = np.max(np.abs(audio_np))
-            print(f"DEBUG: Amplitud máxima del audio: {amplitude:.4f}")
-
             if amplitude < 0.01:
-                print("DEBUG: Audio demasiado bajo (posible silencio), Whisper podría ignorarlo.")
-
-            # B. PASAR A WHISPER
-            print("DEBUG: Procesando con Whisper...")
-            t0 = time.time()
-            segments, _ = stt_model.transcribe(audio_np, language="en")
-            user_text = " ".join([s.text for s in segments]).strip()
-            print(f"⏱️ Whisper tardó: {time.time() - t0:.2f}s")
-            
-            if not user_text:
-                print("DEBUG: Whisper no detectó palabras en este audio.")
+                print("DEBUG: Silencio detectado, ignorando.")
                 continue
-                
-            print(f"🎤 USUARIO DIJO: {user_text}")
 
-            # C. LLM: Groq
-            ai_text = ""
-            try:
-                t1 = time.time()
-                chat_completion = client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_text}
-                    ],
-                    model="llama-3.3-70b-versatile",
-                )
-                ai_text = chat_completion.choices[0].message.content
-                print(f"🤖 Groq tardó: {time.time() - t1:.2f}s | Respuesta: {ai_text}")
-            except Exception as e:
-                print(f"⚠️ Error Groq: {e}")
-                import traceback
-                traceback.print_exc()
-                ai_text = "Can u repeat it pls"
-
-            # D. TTS: F5-TTS (Generación de audio)
-            output_file = os.path.join(BASE_DIR, "output.wav")
-            print("🔊 Generando voz...")
-            t2 = time.time()
+            print("🎤 Procesando voz de usuario...")
+            t0 = time.time()
+            user_text = await run_stt(audio_np)
+            print(f"📝 Transcripción ({time.time() - t0:.2f}s): {user_text}")
             
-            try:
-                # 1. Realizar la inferencia (devuelve el audio y la frecuencia)
-                # Eliminamos model_name y output_file de los argumentos
-                audio, sr, spectr = tts.infer(
-                    gen_text=ai_text,
-                    ref_file=REF_AUDIO,
-                    ref_text=REF_TEXT
-                )
+            if not user_text: continue
+
+            # 3. PIPELINE LLM -> TTS (Streaming)
+            # Iniciamos la generación de respuesta
+            print("🤖 Generando respuesta (Streaming)...")
+            
+            async for sentence in stream_sentences(user_text):
+                print(f"  🗣️ Frase detectada: {sentence}")
                 
-                print(f"DEBUG: TTS Audio shape: {audio.shape}, Sample rate: {sr}")
+                # Generar audio para esta frase en paralelo
+                # (Mientras esto ocurre, el loop sigue disponible si hubiéramos diseñado 
+                #  una arquitectura full-duplex real, pero aquí iteramos sobre el stream)
+                t_tts = time.time()
+                audio_bytes = await run_tts(sentence)
                 
-                if len(audio) == 0:
-                    print("❌ Error: TTS generó audio vacío.")
-                    continue
-
-                # Convertir a Int16 para máxima compatibilidad con navegadores
-                audio = (audio * 32767).clip(-32768, 32767).astype(np.int16)
-
-                # 2. Guardar el archivo manualmente usando scipy
-                wavfile.write(output_file, sr, audio)
-                print(f"DEBUG: Archivo WAV escrito en {output_file}")
-
-                # 3. Enviar el archivo generado
-                if os.path.exists(output_file):
-                    with open(output_file, "rb") as f:
-                        audio_bytes = f.read()
-                        await websocket.send_bytes(audio_bytes)
-                    print(f"✅ Audio enviado ({len(audio_bytes)} bytes)")
+                if audio_bytes:
+                    await websocket.send_bytes(audio_bytes)
+                    print(f"  ✅ Audio enviado ({len(audio_bytes)} bytes) - TTS: {time.time() - t_tts:.2f}s")
                 else:
-                    print("❌ Error: No se pudo crear el archivo WAV.")
-
-            except Exception as e:
-                print(f"❌ Error en TTS: {e}")
+                    print("  ❌ Falló generación de audio para frase.")
 
     except WebSocketDisconnect:
         print("🔌 Cliente desconectado.")
     except Exception as e:
         print(f"🔥 Error Pipeline: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
