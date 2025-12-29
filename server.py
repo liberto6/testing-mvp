@@ -198,7 +198,7 @@ async def stream_sentences(user_text):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_text}
             ],
-            model="llama3-8b-8192", # Fase 2: Modelo más rápido
+            model="llama-3.1-8b-instant", # Fase 2: Modelo más rápido (Actualizado)
             stream=True
         )
 
