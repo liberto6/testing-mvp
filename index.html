@@ -2,10 +2,10 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>English Academy AI - Pipeline Corregido</title>
+    <title>English Academy AI - Streaming Pipeline</title>
     
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.all.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/dist/bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/dist/bundle.min.js"></script>
 
     <style>
         body { font-family: sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
@@ -13,6 +13,7 @@
         .indicator { width: 70px; height: 70px; border-radius: 50%; background: #333; margin: 20px auto; transition: 0.3s; border: 4px solid #121212; }
         .listening { background: #ff4b4b !important; box-shadow: 0 0 20px #ff4b4b; }
         .processing { background: #4b96ff !important; box-shadow: 0 0 20px #4b96ff; animation: pulse 1s infinite; }
+        .speaking { background: #00e676 !important; box-shadow: 0 0 20px #00e676; animation: pulse 1s infinite; }
         @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
         button { padding: 15px 30px; border-radius: 50px; border: none; background: #00c853; color: white; font-weight: bold; cursor: pointer; width: 100%; }
         button:disabled { background: #444; cursor: not-allowed; }
@@ -45,56 +46,59 @@
 
     // 2. Conexión WebSocket
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Si estás abriendo el archivo HTML directamente (file://), usa localhost explícitamente
-    const host = window.location.host || "localhost:8000"; 
-    const ws = new WebSocket(`${protocol}//${host}/ws`);
-    ws.binaryType = "arraybuffer"; // Recibir datos binarios puros
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
     ws.onopen = () => { statusText.innerText = "Conectado. Pulsa el botón."; };
     ws.onclose = () => { statusText.innerText = "Desconectado."; };
 
-    ws.onmessage = async (event) => {
-        indicator.className = "indicator";
-        statusText.innerText = "Sarah está hablando...";
+    // --- COLA DE AUDIO (Audio Queue) ---
+    const audioQueue = [];
+    let isPlaying = false;
+
+    ws.onmessage = (event) => {
+        // Recibimos un chunk de audio (una frase)
+        const blob = new Blob([event.data], { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
         
-        console.log("Mensaje recibido. Tipo:", typeof event.data);
-
-        if (event.data instanceof ArrayBuffer) {
-            console.log("Tamaño del audio recibido:", event.data.byteLength);
-            
-            if (event.data.byteLength === 0) {
-                console.error("Recibido buffer de audio vacío.");
-                statusText.innerText = "Error: Audio vacío.";
-                return;
-            }
-
-            const blob = new Blob([event.data], { type: 'audio/wav' });
-            const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
-            
-            try {
-                await audio.play();
-            } catch (e) {
-                console.error("Error al reproducir audio:", e);
-                statusText.innerText = "Error reproducción: " + e.message;
-            }
-            
-            audio.onended = () => {
-                statusText.innerText = "Sarah te escucha.";
-                indicator.className = "indicator";
-            };
-        } else {
-            console.warn("Se recibió texto en lugar de audio:", event.data);
+        audioQueue.push(url);
+        
+        if (!isPlaying) {
+            statusText.innerText = "Sarah está hablando...";
+            indicator.className = "indicator speaking";
+            processQueue();
         }
     };
 
-    // 3. Lógica VAD (Captura por frases, no por paquetes)
+    async function processQueue() {
+        if (audioQueue.length === 0) {
+            isPlaying = false;
+            statusText.innerText = "Sarah te escucha.";
+            indicator.className = "indicator";
+            return;
+        }
+        
+        isPlaying = true;
+        const url = audioQueue.shift();
+        const audio = new Audio(url);
+        
+        audio.onended = () => {
+            URL.revokeObjectURL(url); // Liberar memoria
+            processQueue(); // Reproducir siguiente
+        };
+        
+        try {
+            await audio.play();
+        } catch (e) {
+            console.error("Error reproduciendo audio:", e);
+            processQueue(); // Intentar siguiente si falla
+        }
+    }
+
+    // 3. Lógica VAD
     startBtn.onclick = async () => {
     try {
         statusText.innerText = "Configurando IA de audio...";
-
-        // CONFIGURACIÓN CRÍTICA: Forzamos la versión 1.19.0 y deshabilitamos hilos 
-        // para evitar que busque los archivos .mjs que dan error 404
+        
         ort.env.wasm.numThreads = 1; 
         ort.env.wasm.proxy = false;
         ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/";
@@ -103,23 +107,27 @@
 
         const myvad = await vad.MicVAD.new({
             stream: stream,
-            // Forzamos el modelo desde la CDN para que no lo busque en tu servidor
             modelURL: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/dist/silero_vad.onnx",
             
             onSpeechStart: () => {
-                indicator.className = "indicator listening";
-                statusText.innerText = "Escuchando...";
+                // Si el usuario habla, podríamos cancelar la reproducción actual si quisiéramos interrupción
+                // Por ahora solo indicamos que escucha
+                if (!isPlaying) {
+                    indicator.className = "indicator listening";
+                    statusText.innerText = "Escuchando...";
+                }
             },
             
             onSpeechEnd: (audio) => {
-                indicator.className = "indicator processing";
-                statusText.innerText = "Sarah procesando frase...";
+                // Solo enviamos si no está hablando la IA (Half-Duplex básico)
+                // O enviamos siempre si queremos Full-Duplex
                 
-                // Convertir a Int16 y enviar
+                indicator.className = "indicator processing";
+                statusText.innerText = "Procesando...";
+                
                 const int16 = Int16Array.from(audio.map(n => n * 32767));
                 if (ws.readyState === WebSocket.OPEN) {
                     ws.send(int16.buffer);
-                    console.log("Audio enviado. Tamaño:", int16.length);
                 }
             }
         });
@@ -130,7 +138,7 @@
 
     } catch (err) {
         console.error("DETALLE DEL ERROR:", err);
-        statusText.innerText = "Error de inicialización. Revisa la consola.";
+        statusText.innerText = "Error de inicialización.";
     }
 };
 </script>
