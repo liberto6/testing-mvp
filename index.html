@@ -74,9 +74,16 @@
             isPlaying = false;
             statusText.innerText = "Sarah te escucha.";
             indicator.className = "indicator";
+            // Reactivar micrófono al terminar de hablar
+            if (window.toggleRecognition) window.toggleRecognition(true);
             return;
         }
         
+        // Pausar micrófono mientras habla la IA (Half-Duplex)
+        if (!isPlaying) {
+             if (window.toggleRecognition) window.toggleRecognition(false);
+        }
+
         isPlaying = true;
         const url = audioQueue.shift();
         const audio = new Audio(url);
@@ -94,60 +101,120 @@
         }
     }
 
-    // 3. Lógica VAD
+    // 3. Lógica VAD y Web Speech API (Híbrido)
     startBtn.onclick = async () => {
     try {
-        statusText.innerText = "Configurando IA de audio...";
+        statusText.innerText = "Configurando...";
         
-        ort.env.wasm.numThreads = 1; 
-        ort.env.wasm.proxy = false;
-        ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/";
+        // --- FASE 3: WEB SPEECH API CHECK ---
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const useWebSpeech = !!SpeechRecognition;
+        
+        if (useWebSpeech) {
+            console.log("🚀 Usando Web Speech API (Modo Rápido)");
+            const recognition = new SpeechRecognition();
+            recognition.continuous = false; // Queremos frases cortas
+            recognition.lang = 'en-US'; // O 'es-ES' y que el backend traduzca, pero 'en-US' fuerza práctica
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
 
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            recognition.onstart = () => {
+                indicator.className = "indicator listening";
+                statusText.innerText = "Escuchando (Nativo)...";
+            };
 
-        const myvad = await vad.MicVAD.new({
-            stream: stream,
-            modelURL: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/dist/silero_vad.onnx",
-            
-            // --- OPTIMIZACIÓN LATENCIA VAD ---
-            positiveSpeechThreshold: 0.6, // Sensibilidad para empezar a detectar
-            negativeSpeechThreshold: 0.4, // Sensibilidad para dejar de detectar
-            minSpeechDurationFrames: 4,   // Ignorar ruidos muy cortos
-            preSpeechPadFrames: 1,        // Menos padding al inicio
-            redemptionFrames: 15,         // CRÍTICO: Esperar solo ~0.5s de silencio antes de cortar (Antes ~1s)
-            
-            onSpeechStart: () => {
-                // Si el usuario habla, podríamos cancelar la reproducción actual si quisiéramos interrupción
-                // Por ahora solo indicamos que escucha
+            recognition.onend = () => {
+                // Reiniciar escucha si no estamos reproduciendo
                 if (!isPlaying) {
-                    indicator.className = "indicator listening";
-                    statusText.innerText = "Escuchando...";
+                    try { recognition.start(); } catch(e) {}
+                } else {
+                    indicator.className = "indicator";
+                    statusText.innerText = "Esperando...";
                 }
-            },
-            
-            onSpeechEnd: (audio) => {
-                // Solo enviamos si no está hablando la IA (Half-Duplex básico)
-                // O enviamos siempre si queremos Full-Duplex
+            };
+
+            recognition.onresult = (event) => {
+                const text = event.results[0][0].transcript;
+                console.log("🗣️ Detectado:", text);
                 
                 indicator.className = "indicator processing";
                 statusText.innerText = "Procesando...";
                 
-                const int16 = Int16Array.from(audio.map(n => n * 32767));
                 if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(int16.buffer);
+                    ws.send(text); // ENVIAR TEXTO DIRECTO
                 }
-            }
-        });
+            };
+            
+            // Loop de reinicio inteligente
+            // Cuando la IA habla, paramos el reconocimiento para que no se escuche a sí misma
+            // Modificamos processQueue para controlar esto
+            
+            window.toggleRecognition = (enable) => {
+                if (enable) {
+                    try { recognition.start(); } catch(e) {}
+                } else {
+                    try { recognition.stop(); } catch(e) {}
+                }
+            };
 
-        myvad.start();
-        startBtn.style.display = 'none';
-        statusText.innerText = "Sarah lista. Puedes hablar.";
+            recognition.start();
+            startBtn.style.display = 'none';
+            statusText.innerText = "Sarah lista (Modo Rápido).";
+
+        } else {
+            // --- FALLBACK: VAD + AUDIO RAW (Modo Lento) ---
+            console.log("🐢 Web Speech no soportado. Usando VAD + Audio Raw.");
+            
+            ort.env.wasm.numThreads = 1; 
+            ort.env.wasm.proxy = false;
+            ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/";
+
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            const myvad = await vad.MicVAD.new({
+                stream: stream,
+                modelURL: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/dist/silero_vad.onnx",
+                
+                // --- OPTIMIZACIÓN LATENCIA VAD ---
+                positiveSpeechThreshold: 0.6,
+                negativeSpeechThreshold: 0.4,
+                minSpeechDurationFrames: 4,
+                preSpeechPadFrames: 1,
+                redemptionFrames: 15,
+                
+                onSpeechStart: () => {
+                    if (!isPlaying) {
+                        indicator.className = "indicator listening";
+                        statusText.innerText = "Escuchando...";
+                    }
+                },
+                
+                onSpeechEnd: (audio) => {
+                    indicator.className = "indicator processing";
+                    statusText.innerText = "Procesando...";
+                    
+                    const int16 = Int16Array.from(audio.map(n => n * 32767));
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(int16.buffer); // ENVIAR BYTES
+                    }
+                }
+            });
+
+            myvad.start();
+            startBtn.style.display = 'none';
+            statusText.innerText = "Sarah lista (Modo VAD).";
+            
+            window.toggleRecognition = (enable) => {
+                if (enable) myvad.start();
+                else myvad.pause();
+            };
+        }
 
     } catch (err) {
         console.error("DETALLE DEL ERROR:", err);
         statusText.innerText = "Error de inicialización.";
     }
-};
+    };
 </script>
 
 </body>

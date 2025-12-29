@@ -118,6 +118,10 @@ stt_model = WhisperModel("tiny", device="cpu", compute_type="int8")
 print(f"Cargando F5-TTS en {device}...")
 tts = F5TTS(device=device)
 
+# --- CACHÉ TTS (Fase 2) ---
+TTS_CACHE = {}
+MAX_CACHE_SIZE = 1000
+
 # Executor para tareas bloqueantes (STT y TTS)
 # Max workers limitado para no saturar CPU/GPU
 executor = ThreadPoolExecutor(max_workers=3) 
@@ -132,16 +136,27 @@ async def run_stt(audio_np):
     return result
 
 def _execute_whisper(audio_np):
-    segments, _ = stt_model.transcribe(audio_np, language="en")
+    segments, _ = stt_model.transcribe(audio_np, language="en", beam_size=1, best_of=1) # Optimización Fase 2
     return " ".join([s.text for s in segments]).strip()
 
 async def run_tts(text):
-    """Ejecuta F5-TTS en un hilo separado."""
+    """Ejecuta F5-TTS en un hilo separado con Caché."""
     if not text.strip():
         return None
+        
+    # Check Caché
+    if text in TTS_CACHE:
+        return TTS_CACHE[text]
     
     loop = asyncio.get_running_loop()
     wav_bytes = await loop.run_in_executor(executor, _execute_tts, text)
+    
+    # Guardar en Caché
+    if wav_bytes:
+        if len(TTS_CACHE) >= MAX_CACHE_SIZE:
+            TTS_CACHE.pop(next(iter(TTS_CACHE))) # Eliminar el más antiguo (simple FIFO)
+        TTS_CACHE[text] = wav_bytes
+        
     return wav_bytes
 
 def _execute_tts(text):
@@ -183,7 +198,7 @@ async def stream_sentences(user_text):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_text}
             ],
-            model="llama-3.3-70b-versatile",
+            model="llama3-8b-8192", # Fase 2: Modelo más rápido
             stream=True
         )
 
@@ -274,33 +289,48 @@ async def websocket_endpoint(websocket: WebSocket):
     
     try:
         while True:
-            # 1. RECIBIR AUDIO (Esperar datos)
-            data = await websocket.receive_bytes()
+            # 1. RECIBIR DATOS (Texto o Audio) - Fase 3: Hybrid Input
+            message = await websocket.receive()
             
-            if len(data) == 0: continue
-            
-            # 2. STT (Procesar entrada)
-            audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-            
-            # Verificar si hay señal
-            amplitude = np.max(np.abs(audio_np))
-            if amplitude < 0.01:
-                logger.debug("Silencio detectado, ignorando.")
-                continue
-
-            logger.info("🎤 Procesando voz de usuario...")
+            user_text = ""
             t_start_pipeline = time.time()
+            t_stt = 0
             
-            # STT
-            t0 = time.time()
-            user_text = await run_stt(audio_np)
-            t_stt = time.time() - t0
+            # Caso A: Texto (Web Speech API) - Ultrarrápido
+            if "text" in message:
+                user_text = message["text"]
+                logger.info(f"📨 Recibido TEXTO directo: '{user_text}'")
+                if not user_text.strip(): continue
+
+            # Caso B: Audio (Fallback / Legacy) - Lento (STT CPU)
+            elif "bytes" in message:
+                data = message["bytes"]
+                if len(data) == 0: continue
+                
+                audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+                
+                # Verificar si hay señal
+                amplitude = np.max(np.abs(audio_np))
+                if amplitude < 0.01:
+                    logger.debug("Silencio detectado, ignorando.")
+                    continue
+
+                logger.info("🎤 Procesando AUDIO de usuario (Whisper CPU)...")
+                
+                # STT
+                t0 = time.time()
+                user_text = await run_stt(audio_np)
+                t_stt = time.time() - t0
+                
+                if not user_text:
+                    logger.warning("STT no detectó texto.")
+                    continue
             
-            if not user_text:
-                logger.warning("STT no detectó texto.")
-                continue
+            # Si no hay texto válido por ninguna vía
+            if not user_text: continue
 
             # 3. PIPELINE LLM -> TTS (Streaming)
+            # ... (Resto igual)
             logger.info(f"📝 Usuario: '{user_text}' (STT: {t_stt:.2f}s)")
             
             # Métricas acumuladas para el reporte final de esta interacción
