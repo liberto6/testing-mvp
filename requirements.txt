@@ -6,6 +6,5 @@ numpy
 scipy
 soundfile
 faster-whisper
-torch
-torchaudio
+
 #./F5-TTS
