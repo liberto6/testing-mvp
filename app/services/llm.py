@@ -8,17 +8,21 @@ if not GROQ_API_KEY:
     
 client = AsyncGroq(api_key=GROQ_API_KEY)
 
-async def stream_sentences(user_text):
+async def stream_sentences(chat_history):
     """
     Genera respuesta del LLM y cede fragmentos de texto lo más rápido posible.
     Estrategia: Streaming agresivo (Chunking por puntuación y longitud).
+    
+    Args:
+        chat_history (list): Lista de mensajes [{"role": "system", ...}, {"role": "user", ...}]
     """
     try:
+        # Asegurar que el system prompt esté al inicio si no está
+        if not chat_history or chat_history[0]["role"] != "system":
+            chat_history.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+            
         completion = await client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_text}
-            ],
+            messages=chat_history,
             model="llama-3.1-8b-instant", # Fase 2: Modelo más rápido (Actualizado)
             stream=True
         )

@@ -3,14 +3,16 @@ import asyncio
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.logging import logger, metrics_logger
+from app.core.config import SYSTEM_PROMPT
 from app.services.stt import run_stt
 from app.services.llm import stream_sentences
 from app.services.tts import run_tts
 
 router = APIRouter()
 
-async def process_pipeline(websocket: WebSocket, message: dict):
+async def process_pipeline(websocket: WebSocket, message: dict, chat_history: list):
     """Procesa una interacción completa: STT -> LLM -> TTS"""
+    full_ai_response = ""
     try:
         user_text = ""
         t_start_pipeline = time.time()
@@ -49,6 +51,9 @@ async def process_pipeline(websocket: WebSocket, message: dict):
         # Si no hay texto válido por ninguna vía
         if not user_text: return
 
+        # --- ACTUALIZAR HISTORIAL (Usuario) ---
+        chat_history.append({"role": "user", "content": user_text})
+
         # 3. PIPELINE LLM -> TTS (Streaming)
         logger.info(f"📝 Usuario: '{user_text}' (STT: {t_stt:.2f}s)")
         
@@ -62,8 +67,9 @@ async def process_pipeline(websocket: WebSocket, message: dict):
         first_audio_sent = False
         t_first_byte = 0
         
-        async for sentence in stream_sentences(user_text):
+        async for sentence in stream_sentences(chat_history):
             t_sent_gen = time.time()
+            full_ai_response += sentence + " "
             
             # Generar audio
             t_tts_start = time.time()
@@ -89,6 +95,10 @@ async def process_pipeline(websocket: WebSocket, message: dict):
             else:
                 logger.error(f"  ❌ Falló TTS para: '{sentence[:20]}...'")
 
+        # --- ACTUALIZAR HISTORIAL (Asistente - Completado) ---
+        if full_ai_response.strip():
+            chat_history.append({"role": "assistant", "content": full_ai_response.strip()})
+
         # Reporte Final Visual
         total_time = time.time() - t_start_pipeline
         
@@ -111,12 +121,18 @@ async def process_pipeline(websocket: WebSocket, message: dict):
         
     except asyncio.CancelledError:
         logger.warning("🛑 Pipeline cancelado por interrupción del usuario.")
+        # --- ACTUALIZAR HISTORIAL (Asistente - Interrumpido) ---
+        if full_ai_response.strip():
+            chat_history.append({"role": "assistant", "content": full_ai_response.strip() + " ...[Interrupted]"})
         raise  # Re-lanzar para que asyncio maneje la cancelación correctamente
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("🚀 Pipeline Streaming conectado.")
+    
+    # Inicializar historial con System Prompt
+    chat_history = [{"role": "system", "content": SYSTEM_PROMPT}]
     
     current_task = None
     
@@ -136,7 +152,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     pass # Esperar a que termine de cancelar
             
             # Crear nueva tarea para procesar el nuevo input
-            current_task = asyncio.create_task(process_pipeline(websocket, message))
+            current_task = asyncio.create_task(process_pipeline(websocket, message, chat_history))
 
     except WebSocketDisconnect:
         logger.info("🔌 Cliente desconectado.")
