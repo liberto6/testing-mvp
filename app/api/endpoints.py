@@ -57,6 +57,9 @@ async def process_pipeline(websocket: WebSocket, message: dict, chat_history: li
         # 3. PIPELINE LLM -> TTS (Streaming)
         logger.info(f"📝 Usuario: '{user_text}' (STT: {t_stt:.2f}s)")
         
+        # Avisar al cliente que comienza una nueva respuesta (Sincronización Barge-in)
+        await websocket.send_json({"type": "response_start"})
+        
         # Métricas acumuladas para el reporte final de esta interacción
         interaction_metrics = {
             "stt_time": t_stt,
