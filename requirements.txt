@@ -7,4 +7,5 @@ numpy
 scipy
 soundfile
 faster-whisper
+kokoro>=0.3.4
 

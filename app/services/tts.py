@@ -1,21 +1,18 @@
 import asyncio
-import io
-import numpy as np
-import scipy.io.wavfile as wavfile
-from f5_tts.api import F5TTS
-from app.core.config import DEVICE, REF_AUDIO, REF_TEXT
+from app.core.config import TTS_ENGINE
 from app.core.executor import executor
-from app.core.logging import logger
-
-print(f"Cargando F5-TTS en {DEVICE}...")
-tts = F5TTS(device=DEVICE)
+from app.services.tts_f5 import generate_audio_f5
+from app.services.tts_kokoro import generate_audio_kokoro
 
 # --- CACHÉ TTS (Fase 2) ---
 TTS_CACHE = {}
 MAX_CACHE_SIZE = 1000
 
 async def run_tts(text):
-    """Ejecuta F5-TTS en un hilo separado con Caché."""
+    """
+    Ejecuta el motor TTS configurado en un hilo separado con Caché.
+    Motor actual: {TTS_ENGINE}
+    """
     if not text.strip():
         return None
         
@@ -23,8 +20,15 @@ async def run_tts(text):
     if text in TTS_CACHE:
         return TTS_CACHE[text]
     
+    # Seleccionar función generadora
+    if TTS_ENGINE == "kokoro":
+        generator_func = generate_audio_kokoro
+    else:
+        generator_func = generate_audio_f5
+    
     loop = asyncio.get_running_loop()
-    wav_bytes = await loop.run_in_executor(executor, _execute_tts, text)
+    # Ejecutar en ThreadPoolExecutor para no bloquear el Event Loop
+    wav_bytes = await loop.run_in_executor(executor, generator_func, text)
     
     # Guardar en Caché
     if wav_bytes:
@@ -33,29 +37,3 @@ async def run_tts(text):
         TTS_CACHE[text] = wav_bytes
         
     return wav_bytes
-
-def _execute_tts(text):
-    try:
-        # F5-TTS infer devuelve: audio (numpy), sr, spectr
-        # Pasamos file_wave=None para que no escriba en disco
-        audio, sr, _ = tts.infer(
-            gen_text=text,
-            ref_file=REF_AUDIO,
-            ref_text=REF_TEXT,
-            file_wave=None, 
-            file_spec=None
-        )
-        
-        if len(audio) == 0:
-            return None
-
-        # Convertir a Int16
-        audio = (audio * 32767).clip(-32768, 32767).astype(np.int16)
-        
-        # Escribir a memoria (BytesIO) en lugar de disco
-        byte_io = io.BytesIO()
-        wavfile.write(byte_io, sr, audio)
-        return byte_io.getvalue()
-    except Exception as e:
-        print(f"❌ Error en TTS Worker: {e}")
-        return None

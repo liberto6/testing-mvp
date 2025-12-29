@@ -13,6 +13,9 @@ F5_TTS_DIR = os.path.join(BASE_DIR, "F5-TTS")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # TTS Config
+TTS_ENGINE = os.getenv("TTS_ENGINE", "f5-tts").lower() # Options: "f5-tts", "kokoro"
+KOKORO_VOICE = os.getenv("KOKORO_VOICE", "af_sarah") # Voice for Kokoro
+
 REF_AUDIO = os.path.join(F5_TTS_DIR, "src", "f5_tts", "infer", "examples", "basic", "basic_ref_en.wav")
 REF_TEXT = "Some call me nature, others call me mother nature"
 
