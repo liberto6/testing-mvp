@@ -1,4 +1,15 @@
-# ... (imports anteriores)
+import os
+import torch
+import numpy as np
+import uvicorn
+import time
+import asyncio
+import io
+import re
+from concurrent.futures import ThreadPoolExecutor
+from dotenv import load_dotenv
+
+load_dotenv() # Cargar variables de entorno desde .env
 import logging
 from logging.config import dictConfig
 
