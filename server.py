@@ -1,7 +1,5 @@
-import os
-import torch
-import numpy as np
 import uvicorn
+<<<<<<< HEAD
 import time
 import asyncio
 import io
@@ -344,6 +342,9 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("🔌 Cliente desconectado.")
     except Exception as e:
         logger.error(f"🔥 Error Crítico Pipeline: {e}", exc_info=True)
+=======
+from app.main import app
+>>>>>>> dev
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

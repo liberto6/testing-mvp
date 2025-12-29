@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>English Academy AI - Streaming Pipeline</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.all.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/dist/bundle.min.js"></script>
+
+    <style>
+        body { font-family: sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: #1e1e1e; padding: 40px; border-radius: 24px; text-align: center; width: 350px; border: 1px solid #333; }
+        .indicator { width: 70px; height: 70px; border-radius: 50%; background: #333; margin: 20px auto; transition: 0.3s; border: 4px solid #121212; }
+        .listening { background: #ff4b4b !important; box-shadow: 0 0 20px #ff4b4b; }
+        .processing { background: #4b96ff !important; box-shadow: 0 0 20px #4b96ff; animation: pulse 1s infinite; }
+        .speaking { background: #00e676 !important; box-shadow: 0 0 20px #00e676; animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+        button { padding: 15px 30px; border-radius: 50px; border: none; background: #00c853; color: white; font-weight: bold; cursor: pointer; width: 100%; }
+        button:disabled { background: #444; cursor: not-allowed; }
+        #status { margin-top: 20px; color: #aaa; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>Sarah AI</h1>
+    <div id="indicator" class="indicator"></div>
+    <p id="status">Cargando inteligencia...</p>
+    <button id="startBtn" disabled>ESPERANDO SISTEMA...</button>
+</div>
+
+<script>
+    const startBtn = document.getElementById('startBtn');
+    const statusText = document.getElementById('status');
+    const indicator = document.getElementById('indicator');
+
+    // 1. Verificar carga de librerías
+    const checkLibs = setInterval(() => {
+        if (typeof ort !== 'undefined' && typeof vad !== 'undefined') {
+            clearInterval(checkLibs);
+            startBtn.disabled = false;
+            startBtn.innerText = "EMPEZAR CLASE";
+            statusText.innerText = "Listo para conectar.";
+        }
+    }, 500);
+
+    // 2. Conexión WebSocket
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+    ws.onopen = () => { statusText.innerText = "Conectado. Pulsa el botón."; };
+    ws.onclose = () => { statusText.innerText = "Desconectado."; };
+
+    // --- COLA DE AUDIO (Audio Queue) ---
+    const audioQueue = [];
+    let isPlaying = false;
+
+    ws.onmessage = (event) => {
+        // Recibimos un chunk de audio (una frase)
+        const blob = new Blob([event.data], { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
+        
+        audioQueue.push(url);
+        
+        if (!isPlaying) {
+            statusText.innerText = "Sarah está hablando...";
+            indicator.className = "indicator speaking";
+            processQueue();
+        }
+    };
+
+    async function processQueue() {
+        if (audioQueue.length === 0) {
+            isPlaying = false;
+            statusText.innerText = "Sarah te escucha.";
+            indicator.className = "indicator";
+            // Reactivar micrófono al terminar de hablar
+            if (window.toggleRecognition) window.toggleRecognition(true);
+            return;
+        }
+        
+        // Pausar micrófono mientras habla la IA (Half-Duplex)
+        if (!isPlaying) {
+             if (window.toggleRecognition) window.toggleRecognition(false);
+        }
+
+        isPlaying = true;
+        const url = audioQueue.shift();
+        const audio = new Audio(url);
+        
+        audio.onended = () => {
+            URL.revokeObjectURL(url); // Liberar memoria
+            processQueue(); // Reproducir siguiente
+        };
+        
+        try {
+            await audio.play();
+        } catch (e) {
+            console.error("Error reproduciendo audio:", e);
+            processQueue(); // Intentar siguiente si falla
+        }
+    }
+
+    // 3. Lógica VAD y Web Speech API (Híbrido)
+    startBtn.onclick = async () => {
+    try {
+        statusText.innerText = "Configurando...";
+        
+        // --- FASE 3: WEB SPEECH API CHECK ---
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const useWebSpeech = !!SpeechRecognition;
+        
+        if (useWebSpeech) {
+            console.log("🚀 Usando Web Speech API (Modo Rápido)");
+            const recognition = new SpeechRecognition();
+            recognition.continuous = false; // Queremos frases cortas
+            recognition.lang = 'en-US'; // O 'es-ES' y que el backend traduzca, pero 'en-US' fuerza práctica
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+
+            recognition.onstart = () => {
+                indicator.className = "indicator listening";
+                statusText.innerText = "Escuchando (Nativo)...";
+            };
+
+            recognition.onend = () => {
+                // Reiniciar escucha si no estamos reproduciendo
+                if (!isPlaying) {
+                    try { recognition.start(); } catch(e) {}
+                } else {
+                    indicator.className = "indicator";
+                    statusText.innerText = "Esperando...";
+                }
+            };
+
+            recognition.onresult = (event) => {
+                const text = event.results[0][0].transcript;
+                console.log("🗣️ Detectado:", text);
+                
+                indicator.className = "indicator processing";
+                statusText.innerText = "Procesando...";
+                
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(text); // ENVIAR TEXTO DIRECTO
+                }
+            };
+            
+            // Loop de reinicio inteligente
+            // Cuando la IA habla, paramos el reconocimiento para que no se escuche a sí misma
+            // Modificamos processQueue para controlar esto
+            
+            window.toggleRecognition = (enable) => {
+                if (enable) {
+                    try { recognition.start(); } catch(e) {}
+                } else {
+                    try { recognition.stop(); } catch(e) {}
+                }
+            };
+
+            recognition.start();
+            startBtn.style.display = 'none';
+            statusText.innerText = "Sarah lista (Modo Rápido).";
+
+        } else {
+            // --- FALLBACK: VAD + AUDIO RAW (Modo Lento) ---
+            console.log("🐢 Web Speech no soportado. Usando VAD + Audio Raw.");
+            
+            ort.env.wasm.numThreads = 1; 
+            ort.env.wasm.proxy = false;
+            ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/";
+
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            const myvad = await vad.MicVAD.new({
+                stream: stream,
+                modelURL: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/dist/silero_vad.onnx",
+                
+                // --- OPTIMIZACIÓN LATENCIA VAD ---
+                positiveSpeechThreshold: 0.6,
+                negativeSpeechThreshold: 0.4,
+                minSpeechDurationFrames: 4,
+                preSpeechPadFrames: 1,
+                redemptionFrames: 15,
+                
+                onSpeechStart: () => {
+                    if (!isPlaying) {
+                        indicator.className = "indicator listening";
+                        statusText.innerText = "Escuchando...";
+                    }
+                },
+                
+                onSpeechEnd: (audio) => {
+                    indicator.className = "indicator processing";
+                    statusText.innerText = "Procesando...";
+                    
+                    const int16 = Int16Array.from(audio.map(n => n * 32767));
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(int16.buffer); // ENVIAR BYTES
+                    }
+                }
+            });
+
+            myvad.start();
+            startBtn.style.display = 'none';
+            statusText.innerText = "Sarah lista (Modo VAD).";
+            
+            window.toggleRecognition = (enable) => {
+                if (enable) myvad.start();
+                else myvad.pause();
+            };
+        }
+
+    } catch (err) {
+        console.error("DETALLE DEL ERROR:", err);
+        statusText.innerText = "Error de inicialización.";
+    }
+    };
+</script>
+
+</body>
+</html>

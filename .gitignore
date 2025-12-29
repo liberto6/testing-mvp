@@ -1,17 +1,48 @@
+# Entornos virtuales
 venv/
+env/
+.env
+
+# Cache de Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Archivos de distribución y compilación
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+
+# Archivos temporales de audio o salida
 *.wav
 *.mp3
-.env
-.DS_Store
-# Ignorar modelos grandes si los hay descargados localmente
+*.png
+output.wav
+test_tts_output.wav
+
+# IDEs y editores
+.vscode/
+.idea/
+*.swp
+
+# Archivos grandes (Modelos, checkpoints)
+# Si necesitas subir modelos, comenta estas líneas o usa git-lfs
 *.pt
-*.safetensors
+*.pth
 *.bin
-# F5-TTS es un repo clonado, si queremos subirlo como parte del código fuente deberíamos quitarle su carpeta .git o usar submodulos.
-# Por simplicidad para el usuario, a menudo es mejor ignorarlo y pedir que se instale, o si es crítico, manejarlo.
-# Voy a asumir que el usuario quiere subir SU código. F5-TTS es una dependencia externa.
-# Sin embargo, si el usuario quiere "todo" para que funcione, quizás quiera subirlo.
-# Pero Github tiene limite de 100MB.
-# Verificaré si F5-TTS tiene archivos grandes.
+*.safetensors
+*.onnx
+*.wasm
+
+# Excepciones para archivos necesarios en el frontend (descomentar si se deben subir)
+!silero_vad.onnx
+!ort-wasm-simd.wasm
+!ort-wasm.wasm
+!ort-wasm-simd-threaded.wasm
+
+# F5-TTS Específico (si es un submódulo o carpeta clonada que no quieres rastrear entera)
+# F5-TTS/ 
+# (Descomentar la línea anterior si F5-TTS es un repo clonado dentro y solo quieres server.py)
