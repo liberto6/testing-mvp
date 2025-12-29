@@ -109,6 +109,13 @@
             stream: stream,
             modelURL: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/dist/silero_vad.onnx",
             
+            // --- OPTIMIZACIÓN LATENCIA VAD ---
+            positiveSpeechThreshold: 0.6, // Sensibilidad para empezar a detectar
+            negativeSpeechThreshold: 0.4, // Sensibilidad para dejar de detectar
+            minSpeechDurationFrames: 4,   // Ignorar ruidos muy cortos
+            preSpeechPadFrames: 1,        // Menos padding al inicio
+            redemptionFrames: 15,         // CRÍTICO: Esperar solo ~0.5s de silencio antes de cortar (Antes ~1s)
+            
             onSpeechStart: () => {
                 // Si el usuario habla, podríamos cancelar la reproducción actual si quisiéramos interrupción
                 // Por ahora solo indicamos que escucha
