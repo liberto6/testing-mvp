@@ -1,15 +1,56 @@
-import os
-import torch
-import numpy as np
-import uvicorn
-import time
-import asyncio
-import io
-import re
-from concurrent.futures import ThreadPoolExecutor
-from dotenv import load_dotenv
+# ... (imports anteriores)
+import logging
+from logging.config import dictConfig
 
-load_dotenv() # Cargar variables de entorno desde .env
+# Configuración de Logging Estructurado
+LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s | %(levelname)-8s | %(module)s:%(funcName)s:%(lineno)d - %(message)s",
+            "datefmt": "%H:%M:%S",
+        },
+        "metrics": {
+            "format": "\n📊 METRICS --------------------------------------------------\n%(message)s\n-----------------------------------------------------------\n",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+            "level": "INFO",
+        },
+        "metrics_console": {
+            "class": "logging.StreamHandler",
+            "formatter": "metrics",
+            "level": "INFO",
+        },
+    },
+    "loggers": {
+        "root": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False
+        },
+        "uvicorn": {
+            "handlers": ["console"],
+            "level": "INFO", 
+            "propagate": False
+        },
+        "metrics": {
+            "handlers": ["metrics_console"],
+            "level": "INFO",
+            "propagate": False
+        }
+    },
+}
+dictConfig(LOGGING_CONFIG)
+logger = logging.getLogger("root")
+metrics_logger = logging.getLogger("metrics")
+
+# ... (resto de imports y código)
+
 
 from groq import AsyncGroq
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -208,47 +249,90 @@ async def websocket_endpoint(websocket: WebSocket):
             if len(data) == 0: continue
             
             # 2. STT (Procesar entrada)
-            # Convertir bytes a numpy
             audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
             
             # Verificar si hay señal
             amplitude = np.max(np.abs(audio_np))
             if amplitude < 0.01:
-                print("DEBUG: Silencio detectado, ignorando.")
+                logger.debug("Silencio detectado, ignorando.")
                 continue
 
-            print("🎤 Procesando voz de usuario...")
+            logger.info("🎤 Procesando voz de usuario...")
+            t_start_pipeline = time.time()
+            
+            # STT
             t0 = time.time()
             user_text = await run_stt(audio_np)
-            print(f"📝 Transcripción ({time.time() - t0:.2f}s): {user_text}")
+            t_stt = time.time() - t0
             
-            if not user_text: continue
+            if not user_text:
+                logger.warning("STT no detectó texto.")
+                continue
 
             # 3. PIPELINE LLM -> TTS (Streaming)
-            # Iniciamos la generación de respuesta
-            print("🤖 Generando respuesta (Streaming)...")
+            logger.info(f"📝 Usuario: '{user_text}' (STT: {t_stt:.2f}s)")
+            
+            # Métricas acumuladas para el reporte final de esta interacción
+            interaction_metrics = {
+                "stt_time": t_stt,
+                "sentences": []
+            }
+
+            t_llm_start = time.time()
+            first_audio_sent = False
+            t_first_byte = 0
             
             async for sentence in stream_sentences(user_text):
-                print(f"  🗣️ Frase detectada: {sentence}")
+                t_sent_gen = time.time()
                 
-                # Generar audio para esta frase en paralelo
-                # (Mientras esto ocurre, el loop sigue disponible si hubiéramos diseñado 
-                #  una arquitectura full-duplex real, pero aquí iteramos sobre el stream)
-                t_tts = time.time()
+                # Generar audio
+                t_tts_start = time.time()
                 audio_bytes = await run_tts(sentence)
+                t_tts_dur = time.time() - t_tts_start
                 
                 if audio_bytes:
                     await websocket.send_bytes(audio_bytes)
-                    print(f"  ✅ Audio enviado ({len(audio_bytes)} bytes) - TTS: {time.time() - t_tts:.2f}s")
+                    
+                    if not first_audio_sent:
+                        t_first_byte = time.time() - t_start_pipeline
+                        first_audio_sent = True
+                    
+                    # Registrar métricas de esta frase
+                    sent_metric = {
+                        "text": sentence[:30] + "..." if len(sentence) > 30 else sentence,
+                        "chars": len(sentence),
+                        "tts_time": t_tts_dur,
+                        "audio_size": len(audio_bytes)
+                    }
+                    interaction_metrics["sentences"].append(sent_metric)
+                    logger.info(f"  📤 Enviado: '{sentence[:20]}...' | TTS: {t_tts_dur:.2f}s")
                 else:
-                    print("  ❌ Falló generación de audio para frase.")
+                    logger.error(f"  ❌ Falló TTS para: '{sentence[:20]}...'")
+
+            # Reporte Final Visual
+            total_time = time.time() - t_start_pipeline
+            
+            report = f"""
+🎯 INTERACTION REPORT
+   Total Latency (End-to-End): {total_time:.2f}s
+   Time to First Audio (TTFA): {t_first_byte:.2f}s {'⚡ FAST' if t_first_byte < 1.5 else '🐢 SLOW'}
+   
+   [STT] Whisper (CPU): {interaction_metrics['stt_time']:.2f}s
+   
+   [TTS Pipeline Breakdown]
+   {'#':<3} | {'Text Segment':<30} | {'Chars':<5} | {'TTS Time':<8} | {'Speed (ms/char)':<15}
+   {'-'*75}"""
+            
+            for i, m in enumerate(interaction_metrics["sentences"]):
+                speed = (m['tts_time'] * 1000) / m['chars'] if m['chars'] > 0 else 0
+                report += f"\n   {i+1:<3} | {m['text']:<30} | {m['chars']:<5} | {m['tts_time']:.2f}s   | {speed:.0f} ms/char"
+            
+            metrics_logger.info(report)
 
     except WebSocketDisconnect:
-        print("🔌 Cliente desconectado.")
+        logger.info("🔌 Cliente desconectado.")
     except Exception as e:
-        print(f"🔥 Error Pipeline: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"🔥 Error Crítico Pipeline: {e}", exc_info=True)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
