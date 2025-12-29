@@ -54,13 +54,12 @@
     // --- COLA DE AUDIO (Audio Queue) ---
     const audioQueue = [];
     let isPlaying = false;
-    let currentAudio = null; 
-    let lastPlaybackEnd = 0; // Timestamp del fin del último audio (para Safety Buffer)
+    let currentAudio = null; // Referencia al audio actual para poder pararlo
 
     function stopAudio() {
         // Función para interrumpir la reproducción (Barge-in)
         isPlaying = false;
-        audioQueue.length = 0; 
+        audioQueue.length = 0; // Vaciar cola
         
         if (currentAudio) {
             currentAudio.pause();
@@ -68,20 +67,15 @@
             currentAudio = null;
         }
         
-        lastPlaybackEnd = Date.now(); // Marcar interrupción como fin de audio
-        
         statusText.innerText = "Interrumpido.";
         indicator.className = "indicator";
+        
+        // Asegurar que el micrófono siga escuchando
+        if (window.toggleRecognition) window.toggleRecognition(true);
     }
 
     ws.onmessage = (event) => {
-        // Control Message (JSON)
-        if (typeof event.data === 'string') {
-             console.log("📩 Mensaje de control:", event.data);
-             return; 
-        }
-
-        // Binary Message (Audio Chunk)
+        // Recibimos un chunk de audio (una frase)
         const blob = new Blob([event.data], { type: 'audio/wav' });
         const url = URL.createObjectURL(blob);
         
@@ -97,28 +91,31 @@
     async function processQueue() {
         if (audioQueue.length === 0) {
             isPlaying = false;
-            lastPlaybackEnd = Date.now(); // Registrar fin de secuencia
-            
             statusText.innerText = "Sarah te escucha.";
             indicator.className = "indicator";
             return;
         }
         
+        // NO PAUSAR MICROFONO (Full Duplex)
+        // if (!isPlaying) {
+        //      if (window.toggleRecognition) window.toggleRecognition(false);
+        // }
+
         isPlaying = true;
         const url = audioQueue.shift();
         currentAudio = new Audio(url);
         
         currentAudio.onended = () => {
-            URL.revokeObjectURL(url); 
+            URL.revokeObjectURL(url); // Liberar memoria
             currentAudio = null;
-            processQueue(); 
+            processQueue(); // Reproducir siguiente
         };
         
         try {
             await currentAudio.play();
         } catch (e) {
             console.error("Error reproduciendo audio:", e);
-            processQueue(); 
+            processQueue(); // Intentar siguiente si falla
         }
     }
 
@@ -205,10 +202,11 @@
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
                     channelCount: 1,
+                    // ESTÁNDAR
                     echoCancellation: true,
                     autoGainControl: true,
                     noiseSuppression: true,
-                    // Flags específicos de Chrome/WebRTC para AEC agresivo
+                    // CHROME/WEBRTC ESPECÍFICOS (Para asegurar AEC agresivo)
                     googEchoCancellation: true,
                     googAutoGainControl: true,
                     googNoiseSuppression: true,
@@ -218,42 +216,41 @@
 
             const myvad = await vad.MicVAD.new({
                 stream: stream,
-                modelURL: "static/silero_vad.onnx", // Local
+                modelURL: "static/silero_vad.onnx", 
                 
-                // AJUSTES VAD (Balanceados para Estabilidad)
-                positiveSpeechThreshold: 0.8,
-                negativeSpeechThreshold: 0.6,    
-                minSpeechDurationFrames: 5,      // ~150ms
+                // AJUSTES VAD (Robusto para Barge-in)
+                positiveSpeechThreshold: 0.9,    // Umbral alto para evitar falsos positivos por eco residual
+                negativeSpeechThreshold: 0.7,    
+                minSpeechDurationFrames: 5,      // ~150ms de habla continua requerida
                 preSpeechPadFrames: 3,           
                 redemptionFrames: 15,            
                 
                 onSpeechStart: () => {
-                    // --- VAD GATING ESTRICTO ---
+                    // --- BARGE-IN (Interrupción Inteligente) ---
+                    // Si la IA está hablando y detectamos voz (post-AEC), asumimos que es el usuario interrumpiendo.
                     if (isPlaying) {
-                        console.log("� VAD Bloqueado (AI hablando)");
-                        return;
+                        console.log("✋ BARGE-IN: Interrupción detectada.");
+                        stopAudio(); // Cortar audio localmente
+                        // Opcional: Enviar señal de 'stop' al backend si fuera necesario, 
+                        // pero enviar el audio a continuación ya cancelará la tarea anterior.
                     }
+                    
                     console.log("VAD: Speech Start");
                     indicator.className = "indicator listening";
                     statusText.innerText = "Escuchando...";
                 },
                 
                 onSpeechEnd: (audio) => {
-                    // --- PROTECCIÓN DE REVERBERACIÓN (Safety Buffer) ---
+                    // --- SAFETY BUFFER (Protección Post-Interrupción) ---
+                    // Si acabamos de interrumpir (lastPlaybackEnd reciente), aseguramos no procesar 
+                    // un fragmento muy corto que podría ser el mismo "click" de corte o eco final.
                     const now = Date.now();
-                    const timeSincePlayback = now - lastPlaybackEnd;
+                    const timeSinceStop = now - lastPlaybackEnd;
                     
-                    if (isPlaying) {
-                        console.log("🗑️ Audio descartado (Durante reproducción)");
-                        return;
-                    }
-                    
-                    // Si pasaron menos de 800ms desde que la IA dejó de hablar, ignoramos.
-                    // Esto filtra el eco de la última palabra/frase.
-                    if (timeSincePlayback < 800) {
-                        console.log(`🛡️ Audio descartado (Reverberación: ${timeSincePlayback}ms < 800ms)`);
+                    if (timeSinceStop < 300) { // 300ms de gracia tras corte
+                        console.log(`🛡️ Audio descartado (Buffer post-corte: ${timeSinceStop}ms)`);
                         indicator.className = "indicator";
-                        statusText.innerText = "Eco filtrado.";
+                        statusText.innerText = "Listo.";
                         return;
                     }
 
