@@ -201,9 +201,15 @@
 
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
+                    channelCount: 1,
                     echoCancellation: true,
+                    autoGainControl: true,
                     noiseSuppression: true,
-                    autoGainControl: true
+                    // Flags específicos de Chrome/WebRTC para AEC agresivo
+                    googEchoCancellation: true,
+                    googAutoGainControl: true,
+                    googNoiseSuppression: true,
+                    googHighpassFilter: true
                 } 
             });
 
@@ -211,22 +217,53 @@
                 stream: stream,
                 modelURL: "static/silero_vad.onnx", // Local
                 
-                positiveSpeechThreshold: 0.6,
-                negativeSpeechThreshold: 0.4,
-                minSpeechDurationFrames: 4,
-                preSpeechPadFrames: 1,
-                redemptionFrames: 15,
+                // AJUSTES DE SENSIBILIDAD (Optimizado para Full-Duplex + AEC)
+                positiveSpeechThreshold: 0.9,    // Muy estricto para filtrar eco residual
+                negativeSpeechThreshold: 0.7,    
+                minSpeechDurationFrames: 5,      // ~150ms
+                preSpeechPadFrames: 5,           
+                redemptionFrames: 20,            
                 
                 onSpeechStart: () => {
                     console.log("VAD: Speech Start");
-                    // INTERRUPCIÓN (Barge-in)
-                    stopAudio();
+                    
+                    // LÓGICA SMART BARGE-IN (Ducking)
+                    if (isPlaying && currentAudio) {
+                        console.log("📉 Ducking audio para escuchar al usuario...");
+                        // Bajamos volumen para reducir eco y confirmar si es voz real
+                        currentAudio.volume = 0.1; 
+                        indicator.className = "indicator listening";
+                        return;
+                    }
                     
                     indicator.className = "indicator listening";
                     statusText.innerText = "Escuchando...";
                 },
                 
                 onSpeechEnd: (audio) => {
+                    // Calcular duración en segundos (samples / sampleRate)
+                    // vad-web usa 16000Hz por defecto para el array devuelto? 
+                    // El audio devuelto es Float32Array [-1, 1].
+                    // Asumimos sample rate de VAD interno (usualmente 16k)
+                    const durationSec = audio.length / 16000;
+                    console.log(`VAD: Speech End (${durationSec.toFixed(2)}s)`);
+
+                    // FILTRO DE ECO / BARGE-IN
+                    if (isPlaying) {
+                        // Si la duración fue muy corta, asumimos que fue un "leak" de eco
+                        // o un ruido transitorio que pasó el umbral.
+                        if (durationSec < 0.4) { 
+                            console.log("🛡️ Eco/Ruido ignorado (Duración corta). Restaurando volumen.");
+                            if (currentAudio) currentAudio.volume = 1.0; // Restaurar volumen
+                            indicator.className = "indicator speaking";
+                            return; // NO ENVIAR AL SERVIDOR
+                        } else {
+                            // Fue una interrupción real
+                            console.log("🗣️ Interrupción confirmada. Cortando TTS.");
+                            stopAudio(); // Detener completamente
+                        }
+                    }
+
                     indicator.className = "indicator processing";
                     statusText.innerText = "Procesando...";
                     
