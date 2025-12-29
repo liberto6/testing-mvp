@@ -1,8 +1,6 @@
 import asyncio
 from app.core.config import TTS_ENGINE
 from app.core.executor import executor
-from app.services.tts_f5 import generate_audio_f5
-from app.services.tts_kokoro import generate_audio_kokoro
 
 # --- CACHÉ TTS (Fase 2) ---
 TTS_CACHE = {}
@@ -20,10 +18,12 @@ async def run_tts(text):
     if text in TTS_CACHE:
         return TTS_CACHE[text]
     
-    # Seleccionar función generadora
+    # Seleccionar función generadora con Lazy Import
     if TTS_ENGINE == "kokoro":
+        from app.services.tts_kokoro import generate_audio_kokoro
         generator_func = generate_audio_kokoro
     else:
+        from app.services.tts_f5 import generate_audio_f5
         generator_func = generate_audio_f5
     
     loop = asyncio.get_running_loop()

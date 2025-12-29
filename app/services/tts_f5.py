@@ -1,7 +1,6 @@
 import io
 import numpy as np
 import scipy.io.wavfile as wavfile
-from f5_tts.api import F5TTS
 from app.core.config import DEVICE, REF_AUDIO, REF_TEXT
 from app.core.logging import logger
 
@@ -11,13 +10,22 @@ def init_f5():
     global tts_model
     if tts_model is None:
         print(f"Cargando F5-TTS en {DEVICE}...")
-        tts_model = F5TTS(device=DEVICE)
+        # Importación Lazy para evitar error si no está instalado
+        try:
+            from f5_tts.api import F5TTS
+            tts_model = F5TTS(device=DEVICE)
+        except ImportError:
+            logger.error("❌ No se pudo importar f5_tts. Asegúrate de que está instalado o en el path.")
+            tts_model = None
 
 def generate_audio_f5(text):
     global tts_model
     if tts_model is None:
         init_f5()
         
+    if tts_model is None:
+        return None
+
     try:
         # F5-TTS infer devuelve: audio (numpy), sr, spectr
         # Pasamos file_wave=None para que no escriba en disco

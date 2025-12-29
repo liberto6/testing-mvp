@@ -16,7 +16,9 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TTS_ENGINE = os.getenv("TTS_ENGINE", "f5-tts").lower() # Options: "f5-tts", "kokoro"
 KOKORO_VOICE = os.getenv("KOKORO_VOICE", "af_sarah") # Voice for Kokoro
 
+# Rutas de Referencia (Solo relevantes si se usa F5-TTS)
 REF_AUDIO = os.path.join(F5_TTS_DIR, "src", "f5_tts", "infer", "examples", "basic", "basic_ref_en.wav")
+# No validar existencia aquí para permitir arrancar sin F5-TTS si se usa Kokoro
 REF_TEXT = "Some call me nature, others call me mother nature"
 
 # Device
