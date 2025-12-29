@@ -18,7 +18,7 @@ pip install -r requirements.txt
 #echo "🗣️ Instalando F5-TTS..."
 #cd F5-TTS
 #pip install -e .
-#cd ..
+#cd .. 
 
 #echo "✅ Instalación completada! Ahora puedes ejecutar el servidor con:"
 #echo "python server.py"
