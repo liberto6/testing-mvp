@@ -13,7 +13,7 @@ def init_kokoro():
     if pipeline is None:
         print(f"Cargando Kokoro TTS en {DEVICE}...")
         try:
-            pipeline = KPipeline(lang_code='a') 
+            pipeline = KPipeline(lang_code='a', repo_id='hexgrad/Kokoro-82M') 
         except Exception as e:
             logger.error(f"Error inicializando Kokoro: {e}")
             pipeline = None

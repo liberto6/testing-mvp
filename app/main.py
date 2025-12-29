@@ -1,17 +1,38 @@
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.core.config import STATIC_DIR
-from app.core.logging import setup_logging
+from app.core.config import STATIC_DIR, TTS_ENGINE
+from app.core.logging import setup_logging, logger
 from app.api.endpoints import router as api_router
 
 # Configurar Logging
 setup_logging()
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Startup ---
+    logger.info(f"🚀 Iniciando servidor. Precalentando TTS: {TTS_ENGINE}...")
+    try:
+        if TTS_ENGINE == "kokoro":
+            from app.services.tts_kokoro import init_kokoro
+            init_kokoro()
+        elif TTS_ENGINE == "f5-tts":
+            from app.services.tts_f5 import init_f5
+            init_f5()
+        logger.info(f"✅ TTS {TTS_ENGINE} listo.")
+    except Exception as e:
+        logger.error(f"❌ Error precalentando TTS: {e}")
+    
+    yield
+    
+    # --- Shutdown ---
+    logger.info("🛑 Apagando servidor...")
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
