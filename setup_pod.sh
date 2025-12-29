@@ -15,10 +15,10 @@ echo "📚 Instalando dependencias de Verba..."
 pip install -r requirements.txt
 
 # 4. Instalar F5-TTS en modo editable
-echo "🗣️ Instalando F5-TTS..."
-cd F5-TTS
-pip install -e .
-cd ..
+#echo "🗣️ Instalando F5-TTS..."
+#cd F5-TTS
+#pip install -e .
+#cd ..
 
-echo "✅ Instalación completada! Ahora puedes ejecutar el servidor con:"
-echo "python server.py"
+#echo "✅ Instalación completada! Ahora puedes ejecutar el servidor con:"
+#echo "python server.py"
