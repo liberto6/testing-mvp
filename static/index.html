@@ -213,57 +213,78 @@
                 } 
             });
 
+            // --- ANALIZADOR DE ENERGÍA (Barge-in por Volumen) ---
+            // Usamos esto para detectar interrupciones fuertes (gritos/habla) incluso si el VAD está "cegado" por el eco.
+            const audioContext = new AudioContext();
+            const source = audioContext.createMediaStreamSource(stream);
+            const analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            
+            // Loop de monitoreo de volumen
+            function checkVolume() {
+                if (!isPlaying) {
+                    requestAnimationFrame(checkVolume);
+                    return;
+                }
+                
+                analyser.getByteFrequencyData(dataArray);
+                
+                // Calcular volumen promedio (RMS aprox)
+                let sum = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    sum += dataArray[i];
+                }
+                const average = sum / dataArray.length;
+                
+                // UMBRAL DE BARGE-IN (Ajustable)
+                // Si el volumen supera ~20% (50/255), asumimos que el usuario está hablando fuerte sobre la IA.
+                // El eco cancelado por AEC debería ser mucho menor a esto.
+                if (average > 40) { 
+                    console.log(`🔊 VOLUMEN ALTO (${average.toFixed(0)}) -> BARGE-IN DETECTADO`);
+                    stopAudio();
+                }
+                
+                requestAnimationFrame(checkVolume);
+            }
+            checkVolume();
+
+
             const myvad = await vad.MicVAD.new({
                 stream: stream,
                 modelURL: "static/silero_vad.onnx", // Local
                 
-                // AJUSTES DE SENSIBILIDAD (Optimizado para Full-Duplex + AEC)
-                positiveSpeechThreshold: 0.9,    // Muy estricto para filtrar eco residual
-                negativeSpeechThreshold: 0.7,    
-                minSpeechDurationFrames: 5,      // ~150ms
-                preSpeechPadFrames: 5,           
-                redemptionFrames: 20,            
+                // AJUSTES VAD (Más relajados ahora que tenemos Gating)
+                positiveSpeechThreshold: 0.8,
+                negativeSpeechThreshold: 0.6,    
+                minSpeechDurationFrames: 4,      
+                preSpeechPadFrames: 3,           
+                redemptionFrames: 15,            
                 
                 onSpeechStart: () => {
-                    console.log("VAD: Speech Start");
-                    
-                    // LÓGICA SMART BARGE-IN (Ducking)
-                    if (isPlaying && currentAudio) {
-                        console.log("📉 Ducking audio para escuchar al usuario...");
-                        // Bajamos volumen para reducir eco y confirmar si es voz real
-                        currentAudio.volume = 0.1; 
-                        indicator.className = "indicator listening";
+                    // --- VAD GATING (Anti-Eco) ---
+                    // Si la IA habla, IGNORAMOS el VAD completamente.
+                    // Confiamos en el AnalyserNode (arriba) para detectar interrupciones reales por volumen.
+                    if (isPlaying) {
+                        console.log("🛡️ VAD ignorado durante reproducción (Eco Protection).");
                         return;
                     }
                     
+                    console.log("VAD: Speech Start");
                     indicator.className = "indicator listening";
                     statusText.innerText = "Escuchando...";
                 },
                 
                 onSpeechEnd: (audio) => {
-                    // Calcular duración en segundos (samples / sampleRate)
-                    // vad-web usa 16000Hz por defecto para el array devuelto? 
-                    // El audio devuelto es Float32Array [-1, 1].
-                    // Asumimos sample rate de VAD interno (usualmente 16k)
-                    const durationSec = audio.length / 16000;
-                    console.log(`VAD: Speech End (${durationSec.toFixed(2)}s)`);
-
-                    // FILTRO DE ECO / BARGE-IN
+                    // --- VAD GATING (Anti-Eco) ---
                     if (isPlaying) {
-                        // Si la duración fue muy corta, asumimos que fue un "leak" de eco
-                        // o un ruido transitorio que pasó el umbral.
-                        if (durationSec < 0.4) { 
-                            console.log("🛡️ Eco/Ruido ignorado (Duración corta). Restaurando volumen.");
-                            if (currentAudio) currentAudio.volume = 1.0; // Restaurar volumen
-                            indicator.className = "indicator speaking";
-                            return; // NO ENVIAR AL SERVIDOR
-                        } else {
-                            // Fue una interrupción real
-                            console.log("🗣️ Interrupción confirmada. Cortando TTS.");
-                            stopAudio(); // Detener completamente
-                        }
+                        console.log("�️ Audio descartado durante reproducción.");
+                        return;
                     }
 
+                    console.log("VAD: Speech End");
                     indicator.className = "indicator processing";
                     statusText.innerText = "Procesando...";
                     
