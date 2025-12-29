@@ -54,12 +54,13 @@
     // --- COLA DE AUDIO (Audio Queue) ---
     const audioQueue = [];
     let isPlaying = false;
-    let currentAudio = null; // Referencia al audio actual para poder pararlo
+    let currentAudio = null; 
+    let lastPlaybackEnd = 0; // Timestamp del fin del último audio (para Safety Buffer)
 
     function stopAudio() {
         // Función para interrumpir la reproducción (Barge-in)
         isPlaying = false;
-        audioQueue.length = 0; // Vaciar cola
+        audioQueue.length = 0; 
         
         if (currentAudio) {
             currentAudio.pause();
@@ -67,15 +68,20 @@
             currentAudio = null;
         }
         
+        lastPlaybackEnd = Date.now(); // Marcar interrupción como fin de audio
+        
         statusText.innerText = "Interrumpido.";
         indicator.className = "indicator";
-        
-        // Asegurar que el micrófono siga escuchando
-        if (window.toggleRecognition) window.toggleRecognition(true);
     }
 
     ws.onmessage = (event) => {
-        // Recibimos un chunk de audio (una frase)
+        // Control Message (JSON)
+        if (typeof event.data === 'string') {
+             console.log("📩 Mensaje de control:", event.data);
+             return; 
+        }
+
+        // Binary Message (Audio Chunk)
         const blob = new Blob([event.data], { type: 'audio/wav' });
         const url = URL.createObjectURL(blob);
         
@@ -91,31 +97,28 @@
     async function processQueue() {
         if (audioQueue.length === 0) {
             isPlaying = false;
+            lastPlaybackEnd = Date.now(); // Registrar fin de secuencia
+            
             statusText.innerText = "Sarah te escucha.";
             indicator.className = "indicator";
             return;
         }
         
-        // NO PAUSAR MICROFONO (Full Duplex)
-        // if (!isPlaying) {
-        //      if (window.toggleRecognition) window.toggleRecognition(false);
-        // }
-
         isPlaying = true;
         const url = audioQueue.shift();
         currentAudio = new Audio(url);
         
         currentAudio.onended = () => {
-            URL.revokeObjectURL(url); // Liberar memoria
+            URL.revokeObjectURL(url); 
             currentAudio = null;
-            processQueue(); // Reproducir siguiente
+            processQueue(); 
         };
         
         try {
             await currentAudio.play();
         } catch (e) {
             console.error("Error reproduciendo audio:", e);
-            processQueue(); // Intentar siguiente si falla
+            processQueue(); 
         }
     }
 
@@ -213,74 +216,44 @@
                 } 
             });
 
-            // --- ANALIZADOR DE ENERGÍA (Barge-in por Volumen) ---
-            // Usamos esto para detectar interrupciones fuertes (gritos/habla) incluso si el VAD está "cegado" por el eco.
-            const audioContext = new AudioContext();
-            const source = audioContext.createMediaStreamSource(stream);
-            const analyser = audioContext.createAnalyser();
-            analyser.fftSize = 256;
-            source.connect(analyser);
-            
-            const dataArray = new Uint8Array(analyser.frequencyBinCount);
-            
-            // Loop de monitoreo de volumen
-            function checkVolume() {
-                if (!isPlaying) {
-                    requestAnimationFrame(checkVolume);
-                    return;
-                }
-                
-                analyser.getByteFrequencyData(dataArray);
-                
-                // Calcular volumen promedio (RMS aprox)
-                let sum = 0;
-                for (let i = 0; i < dataArray.length; i++) {
-                    sum += dataArray[i];
-                }
-                const average = sum / dataArray.length;
-                
-                // UMBRAL DE BARGE-IN (Ajustable)
-                // Si el volumen supera ~20% (50/255), asumimos que el usuario está hablando fuerte sobre la IA.
-                // El eco cancelado por AEC debería ser mucho menor a esto.
-                if (average > 40) { 
-                    console.log(`🔊 VOLUMEN ALTO (${average.toFixed(0)}) -> BARGE-IN DETECTADO`);
-                    stopAudio();
-                }
-                
-                requestAnimationFrame(checkVolume);
-            }
-            checkVolume();
-
-
             const myvad = await vad.MicVAD.new({
                 stream: stream,
                 modelURL: "static/silero_vad.onnx", // Local
                 
-                // AJUSTES VAD (Más relajados ahora que tenemos Gating)
+                // AJUSTES VAD (Balanceados para Estabilidad)
                 positiveSpeechThreshold: 0.8,
                 negativeSpeechThreshold: 0.6,    
-                minSpeechDurationFrames: 4,      
+                minSpeechDurationFrames: 5,      // ~150ms
                 preSpeechPadFrames: 3,           
                 redemptionFrames: 15,            
                 
                 onSpeechStart: () => {
-                    // --- VAD GATING (Anti-Eco) ---
-                    // Si la IA habla, IGNORAMOS el VAD completamente.
-                    // Confiamos en el AnalyserNode (arriba) para detectar interrupciones reales por volumen.
+                    // --- VAD GATING ESTRICTO ---
                     if (isPlaying) {
-                        console.log("🛡️ VAD ignorado durante reproducción (Eco Protection).");
+                        console.log("� VAD Bloqueado (AI hablando)");
                         return;
                     }
-                    
                     console.log("VAD: Speech Start");
                     indicator.className = "indicator listening";
                     statusText.innerText = "Escuchando...";
                 },
                 
                 onSpeechEnd: (audio) => {
-                    // --- VAD GATING (Anti-Eco) ---
+                    // --- PROTECCIÓN DE REVERBERACIÓN (Safety Buffer) ---
+                    const now = Date.now();
+                    const timeSincePlayback = now - lastPlaybackEnd;
+                    
                     if (isPlaying) {
-                        console.log("�️ Audio descartado durante reproducción.");
+                        console.log("🗑️ Audio descartado (Durante reproducción)");
+                        return;
+                    }
+                    
+                    // Si pasaron menos de 800ms desde que la IA dejó de hablar, ignoramos.
+                    // Esto filtra el eco de la última palabra/frase.
+                    if (timeSincePlayback < 800) {
+                        console.log(`🛡️ Audio descartado (Reverberación: ${timeSincePlayback}ms < 800ms)`);
+                        indicator.className = "indicator";
+                        statusText.innerText = "Eco filtrado.";
                         return;
                     }
 
