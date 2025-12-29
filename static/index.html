@@ -55,14 +55,11 @@
     const audioQueue = [];
     let isPlaying = false;
     let currentAudio = null; // Referencia al audio actual para poder pararlo
-    let ignoreIncomingAudio = false; // Flag para Barge-in
 
     function stopAudio() {
         // Función para interrumpir la reproducción (Barge-in)
-        console.log("🛑 Interrumpiendo reproducción (Barge-in)...");
         isPlaying = false;
         audioQueue.length = 0; // Vaciar cola
-        ignoreIncomingAudio = true; // Ignorar paquetes de audio antiguos que lleguen por red
         
         if (currentAudio) {
             currentAudio.pause();
@@ -78,29 +75,6 @@
     }
 
     ws.onmessage = (event) => {
-        // Manejo de mensajes mixtos (JSON control o Bytes audio)
-        
-        if (typeof event.data === "string") {
-            try {
-                const msg = JSON.parse(event.data);
-                if (msg.type === "response_start") {
-                    console.log("✅ Servidor inicia nueva respuesta. Aceptando audio.");
-                    ignoreIncomingAudio = false;
-                    // Aseguramos que la cola esté limpia para lo nuevo
-                    audioQueue.length = 0;
-                }
-            } catch(e) {
-                console.warn("Mensaje de texto no JSON recibido:", event.data);
-            }
-            return;
-        }
-
-        // Si es binario (Audio)
-        if (ignoreIncomingAudio) {
-            console.log("🗑️ Ignorando audio antiguo (Interrumpido)");
-            return;
-        }
-
         // Recibimos un chunk de audio (una frase)
         const blob = new Blob([event.data], { type: 'audio/wav' });
         const url = URL.createObjectURL(blob);
@@ -129,6 +103,7 @@
         }
 
         isPlaying = true;
+        
         const url = audioQueue.shift();
         currentAudio = new Audio(url);
         
@@ -184,9 +159,27 @@
                 statusText.innerText = "Procesando...";
                 
                 if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({text: text})); 
+                    ws.send(JSON.stringify({text: text})); // Enviar como JSON explícito si se prefiere, pero el backend espera JSON o Bytes
+                    // El backend espera: {"text": ...} o bytes.
+                    // ws.send(text) envía string, el backend espera JSON parseable?
+                    // Revisemos endpoints.py: await websocket.receive() devuelve dict si es json, o bytes/str.
+                    // FastAPI websocket.receive() autodetecta. Si enviamos string JSON, lo parsea.
+                    // Si enviamos texto plano, llega como 'text'. 
+                    // endpoints.py verifica: if "text" in message.
+                    // Si envio JSON string: ws.send(JSON.stringify({text: text})) -> message es dict {"text": text}
+                    // Si envio raw text: ws.send(text) -> message es {"text": text} (FastAPI lo envuelve?)
+                    // NO. websocket.receive() devuelve Message dictionary: {'type': 'websocket.receive', 'text': '...'}
+                    // Mi codigo en endpoints.py hace: message = await websocket.receive().
+                    // message es un dict con 'type', 'text' (si es texto) o 'bytes' (si es binario).
+                    // Entonces: if "text" in message funciona para raw string frames.
+                    // PERO, para ser consistentes con la logica de "text" vs "bytes", voy a enviar JSON string.
                 }
             };
+            
+            // Fix para envio de JSON
+            // La implementación anterior enviaba ws.send(text).
+            // FastAPI receive() -> {'type': 'websocket.receive', 'text': 'hola'}
+            // Mi backend busca 'text' en el dict. ESTA BIEN.
             
             window.toggleRecognition = (enable) => {
                 if (enable) {
@@ -220,17 +213,24 @@
                 stream: stream,
                 modelURL: "static/silero_vad.onnx", // Local
                 
-                // AJUSTES DE SENSIBILIDAD (MEJORADO)
-                positiveSpeechThreshold: 0.8,    // Antes 0.6 (Más estricto para evitar ruidos)
-                negativeSpeechThreshold: 0.6,    // Antes 0.4
-                minSpeechDurationFrames: 8,      // Antes 4 (Requiere habla más sostenida, ~250ms)
-                preSpeechPadFrames: 5,           // Antes 1 (Más contexto al inicio)
-                redemptionFrames: 20,            // Antes 15 (Espera un poco más antes de cortar)
+                // AJUSTES DE SENSIBILIDAD (Optimizado para Full-Duplex + AEC)
+                // Threshold alto para confiar en que el AEC limpia el eco, y solo la voz directa fuerte pasa.
+                positiveSpeechThreshold: 0.9,    // Muy estricto (0.9) para evitar falsos positivos por eco residual
+                negativeSpeechThreshold: 0.7,    // Histéresis
+                minSpeechDurationFrames: 5,      // ~150ms (Balance entre reactividad y robustez)
+                preSpeechPadFrames: 5,           // Contexto previo
+                redemptionFrames: 20,            // Espera tras pausa
                 
                 onSpeechStart: () => {
                     console.log("VAD: Speech Start");
+                    
                     // INTERRUPCIÓN (Barge-in)
-                    stopAudio();
+                    // Si la IA está hablando, bajamos volumen (Ducking) para confirmar intencionalidad
+                    // Si se mantiene, cortamos. Por ahora, corte directo confiando en AEC.
+                    if (isPlaying) {
+                        console.log("✋ Barge-in detectado.");
+                        stopAudio(); 
+                    }
                     
                     indicator.className = "indicator listening";
                     statusText.innerText = "Escuchando...";
