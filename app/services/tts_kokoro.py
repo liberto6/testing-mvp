@@ -44,7 +44,8 @@ def generate_audio_kokoro(text):
         
         # Concatenar todos los segmentos de audio
         full_audio = []
-        for i, (gs, ps, audio) in generator:
+        # El generador de Kokoro retorna: (graphemes, phonemes, audio_tensor)
+        for i, (gs, ps, audio) in enumerate(generator):
             full_audio.append(audio)
             
         if not full_audio:
