@@ -96,14 +96,12 @@
             return;
         }
         
-        // Verificar flag de nuevo antes de reproducir
-        if (ignoreIncomingAudio) {
-            audioQueue.length = 0;
-            return;
-        }
+        // NO PAUSAR MICROFONO (Full Duplex)
+        // if (!isPlaying) {
+        //      if (window.toggleRecognition) window.toggleRecognition(false);
+        // }
 
         isPlaying = true;
-        
         const url = audioQueue.shift();
         currentAudio = new Audio(url);
         
@@ -213,24 +211,16 @@
                 stream: stream,
                 modelURL: "static/silero_vad.onnx", // Local
                 
-                // AJUSTES DE SENSIBILIDAD (Optimizado para Full-Duplex + AEC)
-                // Threshold alto para confiar en que el AEC limpia el eco, y solo la voz directa fuerte pasa.
-                positiveSpeechThreshold: 0.9,    // Muy estricto (0.9) para evitar falsos positivos por eco residual
-                negativeSpeechThreshold: 0.7,    // Histéresis
-                minSpeechDurationFrames: 5,      // ~150ms (Balance entre reactividad y robustez)
-                preSpeechPadFrames: 5,           // Contexto previo
-                redemptionFrames: 20,            // Espera tras pausa
+                positiveSpeechThreshold: 0.6,
+                negativeSpeechThreshold: 0.4,
+                minSpeechDurationFrames: 4,
+                preSpeechPadFrames: 1,
+                redemptionFrames: 15,
                 
                 onSpeechStart: () => {
                     console.log("VAD: Speech Start");
-                    
                     // INTERRUPCIÓN (Barge-in)
-                    // Si la IA está hablando, bajamos volumen (Ducking) para confirmar intencionalidad
-                    // Si se mantiene, cortamos. Por ahora, corte directo confiando en AEC.
-                    if (isPlaying) {
-                        console.log("✋ Barge-in detectado.");
-                        stopAudio(); 
-                    }
+                    stopAudio();
                     
                     indicator.className = "indicator listening";
                     statusText.innerText = "Escuchando...";
