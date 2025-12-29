@@ -54,6 +54,25 @@
     // --- COLA DE AUDIO (Audio Queue) ---
     const audioQueue = [];
     let isPlaying = false;
+    let currentAudio = null; // Referencia al audio actual para poder pararlo
+
+    function stopAudio() {
+        // Función para interrumpir la reproducción (Barge-in)
+        isPlaying = false;
+        audioQueue.length = 0; // Vaciar cola
+        
+        if (currentAudio) {
+            currentAudio.pause();
+            currentAudio.currentTime = 0;
+            currentAudio = null;
+        }
+        
+        statusText.innerText = "Interrumpido.";
+        indicator.className = "indicator";
+        
+        // Asegurar que el micrófono siga escuchando
+        if (window.toggleRecognition) window.toggleRecognition(true);
+    }
 
     ws.onmessage = (event) => {
         // Recibimos un chunk de audio (una frase)
@@ -74,27 +93,26 @@
             isPlaying = false;
             statusText.innerText = "Sarah te escucha.";
             indicator.className = "indicator";
-            // Reactivar micrófono al terminar de hablar
-            if (window.toggleRecognition) window.toggleRecognition(true);
             return;
         }
         
-        // Pausar micrófono mientras habla la IA (Half-Duplex)
-        if (!isPlaying) {
-             if (window.toggleRecognition) window.toggleRecognition(false);
-        }
+        // NO PAUSAR MICROFONO (Full Duplex)
+        // if (!isPlaying) {
+        //      if (window.toggleRecognition) window.toggleRecognition(false);
+        // }
 
         isPlaying = true;
         const url = audioQueue.shift();
-        const audio = new Audio(url);
+        currentAudio = new Audio(url);
         
-        audio.onended = () => {
+        currentAudio.onended = () => {
             URL.revokeObjectURL(url); // Liberar memoria
+            currentAudio = null;
             processQueue(); // Reproducir siguiente
         };
         
         try {
-            await audio.play();
+            await currentAudio.play();
         } catch (e) {
             console.error("Error reproduciendo audio:", e);
             processQueue(); // Intentar siguiente si falla
@@ -124,30 +142,42 @@
             };
 
             recognition.onend = () => {
-                // Reiniciar escucha si no estamos reproduciendo
-                if (!isPlaying) {
-                    try { recognition.start(); } catch(e) {}
-                } else {
-                    indicator.className = "indicator";
-                    statusText.innerText = "Esperando...";
-                }
+                // Reiniciar escucha siempre (Continuous listening)
+                try { recognition.start(); } catch(e) {}
             };
 
             recognition.onresult = (event) => {
                 const text = event.results[0][0].transcript;
                 console.log("🗣️ Detectado:", text);
                 
+                // INTERRUPCIÓN (Barge-in)
+                stopAudio();
+                
                 indicator.className = "indicator processing";
                 statusText.innerText = "Procesando...";
                 
                 if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(text); // ENVIAR TEXTO DIRECTO
+                    ws.send(JSON.stringify({text: text})); // Enviar como JSON explícito si se prefiere, pero el backend espera JSON o Bytes
+                    // El backend espera: {"text": ...} o bytes.
+                    // ws.send(text) envía string, el backend espera JSON parseable?
+                    // Revisemos endpoints.py: await websocket.receive() devuelve dict si es json, o bytes/str.
+                    // FastAPI websocket.receive() autodetecta. Si enviamos string JSON, lo parsea.
+                    // Si enviamos texto plano, llega como 'text'. 
+                    // endpoints.py verifica: if "text" in message.
+                    // Si envio JSON string: ws.send(JSON.stringify({text: text})) -> message es dict {"text": text}
+                    // Si envio raw text: ws.send(text) -> message es {"text": text} (FastAPI lo envuelve?)
+                    // NO. websocket.receive() devuelve Message dictionary: {'type': 'websocket.receive', 'text': '...'}
+                    // Mi codigo en endpoints.py hace: message = await websocket.receive().
+                    // message es un dict con 'type', 'text' (si es texto) o 'bytes' (si es binario).
+                    // Entonces: if "text" in message funciona para raw string frames.
+                    // PERO, para ser consistentes con la logica de "text" vs "bytes", voy a enviar JSON string.
                 }
             };
             
-            // Loop de reinicio inteligente
-            // Cuando la IA habla, paramos el reconocimiento para que no se escuche a sí misma
-            // Modificamos processQueue para controlar esto
+            // Fix para envio de JSON
+            // La implementación anterior enviaba ws.send(text).
+            // FastAPI receive() -> {'type': 'websocket.receive', 'text': 'hola'}
+            // Mi backend busca 'text' en el dict. ESTA BIEN.
             
             window.toggleRecognition = (enable) => {
                 if (enable) {
@@ -167,15 +197,20 @@
             
             ort.env.wasm.numThreads = 1; 
             ort.env.wasm.proxy = false;
-            ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/";
+            ort.env.wasm.wasmPaths = "static/"; // Apuntar a local
 
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                } 
+            });
 
             const myvad = await vad.MicVAD.new({
                 stream: stream,
-                modelURL: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/dist/silero_vad.onnx",
+                modelURL: "static/silero_vad.onnx", // Local
                 
-                // --- OPTIMIZACIÓN LATENCIA VAD ---
                 positiveSpeechThreshold: 0.6,
                 negativeSpeechThreshold: 0.4,
                 minSpeechDurationFrames: 4,
@@ -183,10 +218,12 @@
                 redemptionFrames: 15,
                 
                 onSpeechStart: () => {
-                    if (!isPlaying) {
-                        indicator.className = "indicator listening";
-                        statusText.innerText = "Escuchando...";
-                    }
+                    console.log("VAD: Speech Start");
+                    // INTERRUPCIÓN (Barge-in)
+                    stopAudio();
+                    
+                    indicator.className = "indicator listening";
+                    statusText.innerText = "Escuchando...";
                 },
                 
                 onSpeechEnd: (audio) => {

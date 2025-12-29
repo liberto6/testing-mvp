@@ -4,7 +4,7 @@ from app.core.executor import executor
 from app.core.logging import logger
 
 print(f"Cargando Whisper (STT) en CPU...")
-stt_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+stt_model = WhisperModel("small", device="cuda", compute_type="float16")
 
 async def run_stt(audio_np):
     """Ejecuta Whisper en un hilo separado para no bloquear el loop de eventos."""
