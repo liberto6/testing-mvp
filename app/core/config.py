@@ -13,8 +13,15 @@ F5_TTS_DIR = os.path.join(BASE_DIR, "F5-TTS")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # TTS Config
-TTS_ENGINE = os.getenv("TTS_ENGINE", "f5-tts").lower() # Options: "f5-tts", "kokoro"
+TTS_ENGINE = os.getenv("TTS_ENGINE", "f5-tts").lower() # Options: "f5-tts", "kokoro", "vibevoice"
 KOKORO_VOICE = os.getenv("KOKORO_VOICE", "af_sarah") # Voice for Kokoro
+VIBEVOICE_VOICE = os.getenv("VIBEVOICE_VOICE", "Wayne") # Voice for VibeVoice (Wayne, Sarah, etc.)
+VIBEVOICE_VOICES_DIR = os.getenv(
+    "VIBEVOICE_VOICES_DIR",
+    "/Users/pepeda-rosa/Documents/Verba/Repositorios/MicrosoftVibeVoice/VibeVoice/demo/voices/streaming_model/"
+)
+VIBEVOICE_CFG_SCALE = float(os.getenv("VIBEVOICE_CFG_SCALE", "1.5"))  # 1.0-3.0
+VIBEVOICE_DDPM_STEPS = int(os.getenv("VIBEVOICE_DDPM_STEPS", "5"))  # 3-50
 
 # Rutas de Referencia (Solo relevantes si se usa F5-TTS)
 REF_AUDIO = os.path.join(F5_TTS_DIR, "src", "f5_tts", "infer", "examples", "basic", "basic_ref_en.wav")

@@ -1,0 +1,47 @@
+{
+  "description": "VibeVoice TTS Voice Configuration",
+  "voices_directory": "/Users/pepeda-rosa/Documents/Verba/Repositorios/MicrosoftVibeVoice/VibeVoice/demo/voices/streaming_model/",
+  "default_voice": "Wayne",
+  "available_voices": {
+    "Wayne": {
+      "file": "en_US-wayne-medium.pt",
+      "description": "Male voice, medium pitch, American English",
+      "language": "en-US",
+      "gender": "male"
+    },
+    "Sarah": {
+      "file": "en_US-sarah-medium.pt",
+      "description": "Female voice, medium pitch, American English",
+      "language": "en-US",
+      "gender": "female"
+    }
+  },
+  "synthesis_parameters": {
+    "cfg_scale": {
+      "default": 1.5,
+      "min": 1.0,
+      "max": 3.0,
+      "description": "Classifier-Free Guidance scale. Higher values = more expressive but potentially less stable. Recommended: 1.5"
+    },
+    "ddpm_steps": {
+      "default": 5,
+      "min": 3,
+      "max": 50,
+      "description": "Number of diffusion steps. Lower = faster but lower quality. Recommended for streaming: 5"
+    }
+  },
+  "audio_format": {
+    "sample_rate": 24000,
+    "channels": 1,
+    "dtype": "float32",
+    "output_format": "int16_pcm_wav",
+    "description": "VibeVoice generates 24kHz mono float32 audio, converted to 16-bit PCM WAV"
+  },
+  "notes": [
+    "VibeVoice uses pre-embedded voice files (.pt), not voice cloning",
+    "Voice files contain cached KV states for fast generation",
+    "Flash Attention 2 is recommended for best quality (CUDA only)",
+    "MPS (Apple Silicon) uses SDPA attention instead",
+    "Streaming is supported via AudioStreamer class"
+  ]
+}

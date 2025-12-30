@@ -9,3 +9,10 @@ soundfile
 faster-whisper
 kokoro>=0.3.4
 
+# VibeVoice TTS dependencies
+transformers==4.51.3
+torch
+accelerate==1.6.0
+diffusers
+librosa
+

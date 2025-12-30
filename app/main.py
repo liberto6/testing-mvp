@@ -23,12 +23,15 @@ async def lifespan(app: FastAPI):
         elif TTS_ENGINE == "f5-tts":
             from app.services.tts_f5 import init_f5
             init_f5()
+        elif TTS_ENGINE == "vibevoice":
+            from app.services.tts_vibevoice import init_vibevoice
+            init_vibevoice()
         logger.info(f"✅ TTS {TTS_ENGINE} listo.")
     except Exception as e:
         logger.error(f"❌ Error precalentando TTS: {e}")
-    
+
     yield
-    
+
     # --- Shutdown ---
     logger.info("🛑 Apagando servidor...")
 
