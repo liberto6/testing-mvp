@@ -93,22 +93,21 @@
     async function processQueue() {
         if (audioQueue.length === 0) {
             isPlaying = false;
-            // Pequeño delay para evitar que el micro capte el eco final
+            // Pequeño delay para evitar condiciones de carrera, pero NO bloqueamos el micro
             setTimeout(() => {
                 if (audioQueue.length === 0 && !isPlaying) {
                     isAiSpeaking = false;
                     statusText.innerText = "Sarah te escucha.";
                     indicator.className = "indicator";
-                    if (window.toggleRecognition) window.toggleRecognition(true);
                 }
-            }, 500);
+            }, 100);
             return;
         }
         
-        // PAUSAR MICROFONO (Evitar que se escuche a sí misma)
+        // NO PAUSAR MICROFONO (Full Duplex para permitir Barge-in)
+        // Solo marcamos que la IA está hablando para lógica interna si fuera necesaria
         if (!isAiSpeaking) {
             isAiSpeaking = true;
-            if (window.toggleRecognition) window.toggleRecognition(false);
         }
 
         isPlaying = true;
@@ -152,10 +151,9 @@
             };
 
             recognition.onend = () => {
-                // Reiniciar escucha siempre (Continuous listening), excepto si la IA está hablando
-                if (!isAiSpeaking) {
-                    try { recognition.start(); } catch(e) {}
-                }
+                // Reiniciar escucha siempre (Continuous listening)
+                // Permitimos reinicio incluso si la IA habla, para permitir Barge-in
+                try { recognition.start(); } catch(e) {}
             };
 
             recognition.onresult = (event) => {
