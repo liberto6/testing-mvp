@@ -234,6 +234,26 @@
         };
 
         ws.onmessage = (event) => {
+            // Handle JSON messages (like response_start)
+            if (typeof event.data === 'string') {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'response_start') {
+                        log('Sarah está pensando...', 'info');
+                        return;
+                    }
+                } catch (e) {
+                    // Not JSON, ignore
+                }
+                return;
+            }
+
+            // Handle binary audio data
+            if (event.data.size === 0) {
+                log('Audio vacío recibido, ignorando', 'warning');
+                return;
+            }
+
             log(`Audio recibido: ${(event.data.size / 1024).toFixed(1)} KB`);
             const blob = new Blob([event.data], { type: 'audio/wav' });
             const url = URL.createObjectURL(blob);

@@ -15,7 +15,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # TTS Config
 TTS_ENGINE = os.getenv("TTS_ENGINE", "f5-tts").lower() # Options: "f5-tts", "kokoro", "vibevoice"
 KOKORO_VOICE = os.getenv("KOKORO_VOICE", "af_sarah") # Voice for Kokoro
-VIBEVOICE_VOICE = os.getenv("VIBEVOICE_VOICE", "Wayne") # Voice for VibeVoice (Wayne, Sarah, etc.)
+VIBEVOICE_VOICE = os.getenv("VIBEVOICE_VOICE", "Mike") # Voice for VibeVoice (Mike, Carter, Emma, Grace, etc.)
 VIBEVOICE_VOICES_DIR = os.getenv(
     "VIBEVOICE_VOICES_DIR",
     "/workspace/VibeVoice/demo/voices/streaming_model"
