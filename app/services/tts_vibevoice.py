@@ -27,6 +27,7 @@ import scipy.io.wavfile as wavfile
 import torch
 
 from app.core.logging import logger
+from app.core.config import VIBEVOICE_VOICE
 
 # Lazy imports for VibeVoice (se cargan solo cuando se necesita)
 # from vibevoice.modular.modeling_vibevoice_streaming_inference import VibeVoiceStreamingForConditionalGenerationInference
@@ -447,7 +448,7 @@ def init_vibevoice():
             _vibevoice_pipeline = None
 
 
-def generate_audio_vibevoice(text: str, voice_name: str = "Wayne") -> Optional[bytes]:
+def generate_audio_vibevoice(text: str, voice_name: str = None) -> Optional[bytes]:
     """
     Genera audio usando VibeVoice TTS.
 
@@ -468,6 +469,10 @@ def generate_audio_vibevoice(text: str, voice_name: str = "Wayne") -> Optional[b
     if _vibevoice_pipeline is None:
         logger.error("VibeVoice pipeline not initialized")
         return None
+
+    # Use config default if not specified
+    if voice_name is None:
+        voice_name = VIBEVOICE_VOICE
 
     try:
         return _vibevoice_pipeline.synthesize(text, voice_name=voice_name)
