@@ -54,11 +54,13 @@
     // --- COLA DE AUDIO (Audio Queue) ---
     const audioQueue = [];
     let isPlaying = false;
+    let isAiSpeaking = false; // Flag para controlar el estado de habla de la IA
     let currentAudio = null; // Referencia al audio actual para poder pararlo
 
     function stopAudio() {
         // Función para interrumpir la reproducción (Barge-in)
         isPlaying = false;
+        isAiSpeaking = false;
         audioQueue.length = 0; // Vaciar cola
         
         if (currentAudio) {
@@ -91,15 +93,23 @@
     async function processQueue() {
         if (audioQueue.length === 0) {
             isPlaying = false;
-            statusText.innerText = "Sarah te escucha.";
-            indicator.className = "indicator";
+            // Pequeño delay para evitar que el micro capte el eco final
+            setTimeout(() => {
+                if (audioQueue.length === 0 && !isPlaying) {
+                    isAiSpeaking = false;
+                    statusText.innerText = "Sarah te escucha.";
+                    indicator.className = "indicator";
+                    if (window.toggleRecognition) window.toggleRecognition(true);
+                }
+            }, 500);
             return;
         }
         
-        // NO PAUSAR MICROFONO (Full Duplex)
-        // if (!isPlaying) {
-        //      if (window.toggleRecognition) window.toggleRecognition(false);
-        // }
+        // PAUSAR MICROFONO (Evitar que se escuche a sí misma)
+        if (!isAiSpeaking) {
+            isAiSpeaking = true;
+            if (window.toggleRecognition) window.toggleRecognition(false);
+        }
 
         isPlaying = true;
         const url = audioQueue.shift();
@@ -142,8 +152,10 @@
             };
 
             recognition.onend = () => {
-                // Reiniciar escucha siempre (Continuous listening)
-                try { recognition.start(); } catch(e) {}
+                // Reiniciar escucha siempre (Continuous listening), excepto si la IA está hablando
+                if (!isAiSpeaking) {
+                    try { recognition.start(); } catch(e) {}
+                }
             };
 
             recognition.onresult = (event) => {
