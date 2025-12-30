@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>English Academy AI - Whisper Mode</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #121212;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background: #1e1e1e;
+            padding: 40px;
+            border-radius: 24px;
+            text-align: center;
+            width: 400px;
+            border: 1px solid #333;
+        }
+        .indicator {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: #333;
+            margin: 20px auto;
+            transition: 0.3s;
+            border: 4px solid #121212;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2em;
+        }
+        .listening {
+            background: #ff4b4b !important;
+            box-shadow: 0 0 30px #ff4b4b;
+            animation: pulse 1s infinite;
+        }
+        .processing {
+            background: #4b96ff !important;
+            box-shadow: 0 0 30px #4b96ff;
+            animation: pulse 1s infinite;
+        }
+        .speaking {
+            background: #00e676 !important;
+            box-shadow: 0 0 30px #00e676;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+        }
+        button {
+            padding: 15px 30px;
+            border-radius: 50px;
+            border: none;
+            background: #00c853;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 10px;
+            font-size: 1em;
+        }
+        button:disabled {
+            background: #444;
+            cursor: not-allowed;
+        }
+        button.stop {
+            background: #ff4444;
+        }
+        button.record {
+            background: #ff9800;
+        }
+        #status {
+            margin-top: 20px;
+            color: #aaa;
+            font-size: 1rem;
+            min-height: 40px;
+        }
+        #debug {
+            margin-top: 20px;
+            padding: 15px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            color: #888;
+            max-height: 250px;
+            overflow-y: auto;
+            text-align: left;
+            font-family: 'Courier New', monospace;
+        }
+        .instruction {
+            background: #333;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-size: 0.85rem;
+            color: #bbb;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>🎤 Sarah AI</h1>
+    <p style="color: #666; font-size: 0.9em;">Whisper Mode (Local STT)</p>
+
+    <div id="indicator" class="indicator">🎙️</div>
+
+    <p id="status">Inicializando...</p>
+
+    <div class="instruction" id="instruction">
+        Presiona "Empezar" para iniciar la conversación
+    </div>
+
+    <button id="startBtn" disabled>ESPERANDO...</button>
+    <button id="recordBtn" style="display:none;" class="record">🔴 MANTÉN PARA HABLAR</button>
+    <button id="stopBtn" style="display:none;" class="stop">⏹️ DETENER SESIÓN</button>
+
+    <div id="debug"></div>
+</div>
+
+<script>
+    const startBtn = document.getElementById('startBtn');
+    const recordBtn = document.getElementById('recordBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const statusText = document.getElementById('status');
+    const indicator = document.getElementById('indicator');
+    const debugDiv = document.getElementById('debug');
+    const instruction = document.getElementById('instruction');
+
+    let ws = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let stream = null;
+    let isRecording = false;
+
+    // Audio queue para reproducción
+    const audioQueue = [];
+    let isPlaying = false;
+    let currentAudio = null;
+
+    // Debug logger
+    function log(msg, type = 'info') {
+        const timestamp = new Date().toLocaleTimeString();
+        const colors = {
+            'error': '#ff4444',
+            'success': '#00e676',
+            'warning': '#ff9800',
+            'info': '#4b96ff'
+        };
+        const color = colors[type] || '#888';
+
+        const line = document.createElement('div');
+        line.style.color = color;
+        line.textContent = `[${timestamp}] ${msg}`;
+        debugDiv.appendChild(line);
+        debugDiv.scrollTop = debugDiv.scrollHeight;
+
+        console.log(`[${type.toUpperCase()}] ${msg}`);
+    }
+
+    // Audio playback
+    function stopAudio() {
+        isPlaying = false;
+        audioQueue.length = 0;
+        if (currentAudio) {
+            currentAudio.pause();
+            currentAudio.currentTime = 0;
+            currentAudio = null;
+        }
+    }
+
+    async function processQueue() {
+        if (audioQueue.length === 0) {
+            isPlaying = false;
+            statusText.innerText = "Sarah te escucha. Mantén presionado para hablar.";
+            indicator.innerHTML = "👂";
+            indicator.className = "indicator";
+            return;
+        }
+
+        isPlaying = true;
+        const url = audioQueue.shift();
+        currentAudio = new Audio(url);
+
+        indicator.innerHTML = "🗣️";
+        indicator.className = "indicator speaking";
+        statusText.innerText = "Sarah está hablando...";
+
+        currentAudio.onended = () => {
+            URL.revokeObjectURL(url);
+            currentAudio = null;
+            processQueue();
+        };
+
+        try {
+            await currentAudio.play();
+        } catch (e) {
+            log(`Error reproduciendo audio: ${e}`, 'error');
+            processQueue();
+        }
+    }
+
+    // WebSocket setup
+    function setupWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+        log(`Conectando a ${wsUrl}`);
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            log('WebSocket conectado ✓', 'success');
+            statusText.innerText = "Conectado. Listo para conversar.";
+            startBtn.disabled = false;
+            startBtn.innerText = "🚀 EMPEZAR CONVERSACIÓN";
+        };
+
+        ws.onclose = (event) => {
+            log(`WebSocket cerrado: ${event.code}`, 'error');
+            statusText.innerText = "Desconectado del servidor.";
+            startBtn.disabled = true;
+        };
+
+        ws.onerror = (error) => {
+            log(`Error de WebSocket`, 'error');
+        };
+
+        ws.onmessage = (event) => {
+            log(`Audio recibido: ${(event.data.size / 1024).toFixed(1)} KB`);
+            const blob = new Blob([event.data], { type: 'audio/wav' });
+            const url = URL.createObjectURL(blob);
+            audioQueue.push(url);
+
+            if (!isPlaying) {
+                processQueue();
+            }
+        };
+    }
+
+    // Microphone setup
+    async function setupMicrophone() {
+        try {
+            log('Solicitando acceso al micrófono...');
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    sampleRate: 16000
+                }
+            });
+
+            log('Micrófono accesible ✓', 'success');
+
+            // Configurar MediaRecorder para WAV
+            const options = { mimeType: 'audio/webm' };
+            mediaRecorder = new MediaRecorder(stream, options);
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = async () => {
+                if (audioChunks.length === 0) {
+                    log('No se grabó audio', 'warning');
+                    return;
+                }
+
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                audioChunks = [];
+
+                log(`Audio grabado: ${(audioBlob.size / 1024).toFixed(1)} KB`);
+
+                // Convertir a AudioBuffer para enviar como PCM
+                const arrayBuffer = await audioBlob.arrayBuffer();
+                const audioContext = new AudioContext({ sampleRate: 16000 });
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+                // Convertir a mono si es stereo
+                const channelData = audioBuffer.getChannelData(0);
+
+                // Convertir Float32 a Int16
+                const int16Data = new Int16Array(channelData.length);
+                for (let i = 0; i < channelData.length; i++) {
+                    int16Data[i] = Math.max(-32768, Math.min(32767, channelData[i] * 32767));
+                }
+
+                log(`Enviando ${int16Data.length} samples al servidor...`);
+
+                // Enviar al servidor
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(int16Data.buffer);
+
+                    indicator.innerHTML = "⏳";
+                    indicator.className = "indicator processing";
+                    statusText.innerText = "Procesando con Whisper...";
+                } else {
+                    log('WebSocket no disponible', 'error');
+                }
+            };
+
+            return true;
+        } catch (err) {
+            log(`Error accediendo al micrófono: ${err.message}`, 'error');
+            statusText.innerText = "Error: No se puede acceder al micrófono";
+            return false;
+        }
+    }
+
+    // Start button
+    startBtn.onclick = async () => {
+        if (!await setupMicrophone()) {
+            return;
+        }
+
+        startBtn.style.display = 'none';
+        recordBtn.style.display = 'block';
+        stopBtn.style.display = 'block';
+
+        statusText.innerText = "Sarah te escucha. Mantén presionado para hablar.";
+        indicator.innerHTML = "👂";
+        indicator.className = "indicator";
+        instruction.innerHTML = "💡 <strong>Presiona y mantén</strong> el botón naranja mientras hablas. Suéltalo cuando termines.";
+
+        log('Sistema iniciado ✓', 'success');
+    };
+
+    // Record button (push-to-talk)
+    recordBtn.onmousedown = recordBtn.ontouchstart = () => {
+        if (isPlaying) {
+            stopAudio();
+        }
+
+        audioChunks = [];
+        isRecording = true;
+
+        mediaRecorder.start();
+        log('Grabando...', 'info');
+
+        indicator.innerHTML = "🔴";
+        indicator.className = "indicator listening";
+        statusText.innerText = "Grabando... (suelta cuando termines)";
+        recordBtn.innerText = "🔴 GRABANDO...";
+    };
+
+    recordBtn.onmouseup = recordBtn.onmouseleave = recordBtn.ontouchend = () => {
+        if (!isRecording) return;
+
+        isRecording = false;
+        mediaRecorder.stop();
+        log('Grabación finalizada', 'success');
+
+        recordBtn.innerText = "🔴 MANTÉN PARA HABLAR";
+        statusText.innerText = "Procesando...";
+    };
+
+    // Stop button
+    stopBtn.onclick = () => {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            mediaRecorder.stop();
+        }
+
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+        }
+
+        stopAudio();
+
+        startBtn.style.display = 'block';
+        recordBtn.style.display = 'none';
+        stopBtn.style.display = 'none';
+
+        statusText.innerText = "Sesión detenida.";
+        indicator.innerHTML = "⏹️";
+        indicator.className = "indicator";
+        instruction.innerHTML = "Presiona 'Empezar' para iniciar una nueva conversación";
+
+        log('Sistema detenido', 'info');
+    };
+
+    // Initialize
+    log('Inicializando sistema...');
+    setupWebSocket();
+</script>
+
+</body>
+</html>
