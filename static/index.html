@@ -51,17 +51,19 @@
     ws.onopen = () => { statusText.innerText = "Conectado. Pulsa el botón."; };
     ws.onclose = () => { statusText.innerText = "Desconectado."; };
 
-    // --- COLA DE AUDIO (Audio Queue) ---
+        // --- COLA DE AUDIO (Audio Queue) ---
     const audioQueue = [];
     let isPlaying = false;
-    let isAiSpeaking = false; // Flag para controlar el estado de habla de la IA
-    let currentAudio = null; // Referencia al audio actual para poder pararlo
+    let isAiSpeaking = false; 
+    let currentAudio = null;
+    let lastAiSpeechTime = 0; // Timestamp de cuándo terminó de hablar la IA
 
     function stopAudio() {
         // Función para interrumpir la reproducción (Barge-in)
         isPlaying = false;
         isAiSpeaking = false;
         audioQueue.length = 0; // Vaciar cola
+        lastAiSpeechTime = Date.now(); // Marcar interrupción como fin de habla
         
         if (currentAudio) {
             currentAudio.pause();
@@ -71,9 +73,6 @@
         
         statusText.innerText = "Interrumpido.";
         indicator.className = "indicator";
-        
-        // Asegurar que el micrófono siga escuchando
-        if (window.toggleRecognition) window.toggleRecognition(true);
     }
 
     ws.onmessage = (event) => {
@@ -93,10 +92,11 @@
     async function processQueue() {
         if (audioQueue.length === 0) {
             isPlaying = false;
-            // Pequeño delay para evitar condiciones de carrera, pero NO bloqueamos el micro
+            // Pequeño delay para evitar condiciones de carrera
             setTimeout(() => {
                 if (audioQueue.length === 0 && !isPlaying) {
                     isAiSpeaking = false;
+                    lastAiSpeechTime = Date.now(); // Registramos cuándo paró
                     statusText.innerText = "Sarah te escucha.";
                     indicator.className = "indicator";
                 }
@@ -104,8 +104,7 @@
             return;
         }
         
-        // NO PAUSAR MICROFONO (Full Duplex para permitir Barge-in)
-        // Solo marcamos que la IA está hablando para lógica interna si fuera necesaria
+        // Marcamos que la IA está hablando
         if (!isAiSpeaking) {
             isAiSpeaking = true;
         }
@@ -160,27 +159,31 @@
                 const text = event.results[0][0].transcript;
                 console.log("🗣️ Detectado:", text);
                 
-                // INTERRUPCIÓN (Barge-in)
-                stopAudio();
+                // --- AEC LÓGICO ---
+                // Si la IA está hablando o acaba de terminar hace muy poco (<500ms), 
+                // y el texto detectado es sospechosamente corto o repetitivo, lo ignoramos.
+                // PERO, si es Web Speech API nativa, el navegador suele tener buen AEC.
+                // El problema real es cuando el volumen es muy alto y el AEC falla.
+                // Intentaremos detectar interrupción real vs eco.
+                
+                // Si la IA habla, asumimos que es una interrupción (Barge-in)
+                if (isAiSpeaking) {
+                    console.log("⚡ Posible interrupción detectada (IA hablando)...");
+                    stopAudio(); // Paramos IA
+                } else {
+                     // Si la IA NO habla, pero acaba de terminar hace nada (Eco tardío)
+                     const timeSinceAiStop = Date.now() - lastAiSpeechTime;
+                     if (timeSinceAiStop < 800) {
+                         console.warn(`🛑 Eco detectado (${timeSinceAiStop}ms tras IA). Ignorando: ${text}`);
+                         return; 
+                     }
+                }
                 
                 indicator.className = "indicator processing";
                 statusText.innerText = "Procesando...";
                 
                 if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({text: text})); // Enviar como JSON explícito si se prefiere, pero el backend espera JSON o Bytes
-                    // El backend espera: {"text": ...} o bytes.
-                    // ws.send(text) envía string, el backend espera JSON parseable?
-                    // Revisemos endpoints.py: await websocket.receive() devuelve dict si es json, o bytes/str.
-                    // FastAPI websocket.receive() autodetecta. Si enviamos string JSON, lo parsea.
-                    // Si enviamos texto plano, llega como 'text'. 
-                    // endpoints.py verifica: if "text" in message.
-                    // Si envio JSON string: ws.send(JSON.stringify({text: text})) -> message es dict {"text": text}
-                    // Si envio raw text: ws.send(text) -> message es {"text": text} (FastAPI lo envuelve?)
-                    // NO. websocket.receive() devuelve Message dictionary: {'type': 'websocket.receive', 'text': '...'}
-                    // Mi codigo en endpoints.py hace: message = await websocket.receive().
-                    // message es un dict con 'type', 'text' (si es texto) o 'bytes' (si es binario).
-                    // Entonces: if "text" in message funciona para raw string frames.
-                    // PERO, para ser consistentes con la logica de "text" vs "bytes", voy a enviar JSON string.
+                    ws.send(JSON.stringify({text: text})); 
                 }
             };
             
@@ -229,14 +232,42 @@
                 
                 onSpeechStart: () => {
                     console.log("VAD: Speech Start");
-                    // INTERRUPCIÓN (Barge-in)
-                    stopAudio();
+                    
+                    // --- AEC LÓGICO PARA VAD ---
+                    // En modo VAD es más crítico porque no hay AEC nativo de Speech API.
+                    
+                    if (isAiSpeaking) {
+                        // Si la IA habla, puede ser eco o interrupción.
+                        // VAD de Silero es robusto, pero el audio raw incluye lo que sale del speaker si no hay AEC hardware.
+                        // Como pedimos echoCancellation: true en getUserMedia, confiamos en ello.
+                        // Pero si sigue fallando, es que el volumen es muy alto.
+                        
+                        // ESTRATEGIA: Asumir interrupción, PERO si es muy breve podría ser un pico de eco.
+                        console.log("⚡ VAD: Posible interrupción...");
+                        stopAudio();
+                    } else {
+                         const timeSinceAiStop = Date.now() - lastAiSpeechTime;
+                         if (timeSinceAiStop < 800) {
+                             console.warn(`🛑 VAD: Eco detectado (${timeSinceAiStop}ms tras IA). Ignorando.`);
+                             // Forzamos "no speech" o simplemente no hacemos nada
+                             return; 
+                         }
+                    }
                     
                     indicator.className = "indicator listening";
                     statusText.innerText = "Escuchando...";
                 },
                 
                 onSpeechEnd: (audio) => {
+                    // Doble check de eco al finalizar
+                    const timeSinceAiStop = Date.now() - lastAiSpeechTime;
+                    // Si la IA estaba hablando hace menos de 800ms cuando EMPEZÓ este speech (aproximado), descartar.
+                    // (Simplificado: si acabamos de parar la IA hace nada, es probable eco)
+                    if (timeSinceAiStop < 800 && !isAiSpeaking) {
+                         console.warn("🛑 VAD: Descartando segmento por eco tardío.");
+                         return;
+                    }
+
                     indicator.className = "indicator processing";
                     statusText.innerText = "Procesando...";
                     
