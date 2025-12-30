@@ -48,7 +48,7 @@ class VibeVoiceTTS:
     def __init__(
         self,
         model_path: str = "microsoft/VibeVoice-Realtime-0.5B",
-        voices_dir: str = "/Users/pepeda-rosa/Documents/Verba/Repositorios/MicrosoftVibeVoice/VibeVoice/demo/voices/streaming_model/",
+        voices_dir: str = "/workspace/VibeVoice/demo/voices/streaming_model",
         device: Optional[str] = None,
         cfg_scale: float = 1.5,
         ddpm_steps: int = 5,
@@ -319,7 +319,9 @@ class VibeVoiceTTS:
         Returns:
             Bytes WAV en formato PCM 16-bit, 24kHz, mono
         """
-        # Convert to numpy
+        # Convert to numpy (handle BFloat16)
+        if audio_tensor.dtype == torch.bfloat16:
+            audio_tensor = audio_tensor.to(torch.float32)
         audio_np = audio_tensor.cpu().numpy()
 
         # Ensure 1D
@@ -382,14 +384,18 @@ class VoiceMapper:
             if os.path.exists(path)
         }
 
-        # Create short name mappings (for names like 'en_US-wayne' -> 'wayne')
+        # Create short name mappings (for names like 'en-Carter_man' -> 'Carter')
         new_dict = {}
         for name, path in self.voice_presets.items():
+            # Extract name between '-' and '_' (e.g., 'en-Carter_man' -> 'Carter')
+            if '-' in name and '_' in name:
+                parts = name.split('-')
+                if len(parts) > 1:
+                    name_part = parts[1].split('_')[0]  # 'Carter_man' -> 'Carter'
+                    new_dict[name_part] = path
+            # Also add full name without extension
             if '_' in name:
                 short_name = name.split('_')[0]
-                new_dict[short_name] = path
-            if '-' in name:
-                short_name = name.split('-')[-1]
                 new_dict[short_name] = path
 
         self.voice_presets.update(new_dict)
