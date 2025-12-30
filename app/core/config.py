@@ -18,7 +18,7 @@ KOKORO_VOICE = os.getenv("KOKORO_VOICE", "af_sarah") # Voice for Kokoro
 VIBEVOICE_VOICE = os.getenv("VIBEVOICE_VOICE", "Wayne") # Voice for VibeVoice (Wayne, Sarah, etc.)
 VIBEVOICE_VOICES_DIR = os.getenv(
     "VIBEVOICE_VOICES_DIR",
-    "/Users/pepeda-rosa/Documents/Verba/Repositorios/MicrosoftVibeVoice/VibeVoice/demo/voices/streaming_model/"
+    "/workspace/VibeVoice/demo/voices/streaming_model"
 )
 VIBEVOICE_CFG_SCALE = float(os.getenv("VIBEVOICE_CFG_SCALE", "1.5"))  # 1.0-3.0
 VIBEVOICE_DDPM_STEPS = int(os.getenv("VIBEVOICE_DDPM_STEPS", "5"))  # 3-50
