@@ -1,0 +1,40 @@
+# CPU Fallback Configuration for Pipecat Voice Pipeline
+# For CPU-only environments or when GPU is unavailable
+
+stt:
+  provider: "whisper"
+  model: "base"  # Smaller model for CPU
+  language: "en"
+  device: "cpu"
+  compute_type: "int8"  # Quantized for CPU efficiency
+  batch_size: 1
+  beam_size: 1  # Reduced for speed
+  vad_enabled: true
+  vad_device: "cpu"
+  vad_threshold: 0.5
+  enable_flash_attention: false
+
+llm:
+  provider: "groq"
+  model: "llama-3.1-8b-instant"
+  temperature: 0.7
+  max_tokens: 150
+  stream: true
+
+tts:
+  provider: "edge"  # Use Edge TTS on CPU (free, efficient)
+  device: "cpu"
+  voice: "en-US-JennyNeural"
+  speed: 1.0
+  quality: "medium"
+
+transport:
+  type: "websocket"
+  host: "0.0.0.0"
+  port: 8000
+  sample_rate: 16000
+  channels: 1
+
+gpu:
+  enabled: false
+  optimize_for_latency: false
