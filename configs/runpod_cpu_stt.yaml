@@ -1,0 +1,45 @@
+# RunPod Configuration - CPU STT (temporal fix for cuDNN issues)
+# Use this if you get cuDNN errors with GPU Whisper
+
+stt:
+  provider: "whisper"
+  model: "base"  # Smaller model for CPU
+  language: "en"
+  device: "cpu"  # Use CPU for STT
+  compute_type: "int8"
+  batch_size: 1
+  beam_size: 1
+  vad_enabled: true
+  vad_device: "cpu"
+  vad_threshold: 0.5
+  enable_flash_attention: false
+
+llm:
+  provider: "groq"
+  model: "llama-3.1-8b-instant"
+  temperature: 0.7
+  max_tokens: 150
+  stream: true
+
+tts:
+  provider: "kokoro"
+  device: "cuda"  # TTS can still use GPU
+  voice: "af_sarah"
+  speed: 1.0
+  quality: "high"
+  fallback_provider: "edge"
+
+transport:
+  type: "websocket"
+  host: "0.0.0.0"
+  port: 8000
+  sample_rate: 16000
+  channels: 1
+
+gpu:
+  enabled: true
+  device_id: 0
+  memory_fraction: 0.8
+  allow_growth: true
+  mixed_precision: true
+  optimize_for_latency: true
