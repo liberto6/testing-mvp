@@ -44,7 +44,7 @@ class GPUManager:
     def _detect_device(self) -> torch.device:
         """Detect available compute device"""
         if torch.cuda.is_available():
-            device = torch.device("cuda:0")
+            device = torch.device("cuda")  # faster-whisper needs "cuda" not "cuda:0"
             logger.info(f"✅ CUDA available: {torch.cuda.get_device_name(0)}")
             return device
         else:

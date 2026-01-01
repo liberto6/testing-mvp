@@ -79,5 +79,5 @@ echo ""
 echo "   Press Ctrl+C to stop"
 echo ""
 
-# Run server
-python3 -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+# Run server (using uvicorn module to avoid import issues)
+python3 -m uvicorn src.main:app --host 0.0.0.0 --port 8000
