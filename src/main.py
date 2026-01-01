@@ -161,22 +161,34 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            # Receive message from client
-            message = await websocket.receive()
+            try:
+                # Receive message from client
+                message = await websocket.receive()
 
-            # Cancel previous task if still running (barge-in)
-            if current_task and not current_task.done():
-                logger.info("✋ Interruption detected, canceling previous response...")
-                current_task.cancel()
-                try:
-                    await current_task
-                except asyncio.CancelledError:
-                    pass
+                # Check if it's a disconnect message
+                if message.get("type") == "websocket.disconnect":
+                    logger.info("🔌 Client initiated disconnect")
+                    break
 
-            # Create new processing task
-            current_task = asyncio.create_task(
-                process_message(websocket, message)
-            )
+                # Cancel previous task if still running (barge-in)
+                if current_task and not current_task.done():
+                    logger.info("✋ Interruption detected, canceling previous response...")
+                    current_task.cancel()
+                    try:
+                        await current_task
+                    except asyncio.CancelledError:
+                        pass
+
+                # Create new processing task
+                current_task = asyncio.create_task(
+                    process_message(websocket, message)
+                )
+
+            except RuntimeError as e:
+                if "Cannot call" in str(e) and "disconnect" in str(e):
+                    logger.info("🔌 WebSocket already disconnected")
+                    break
+                raise
 
     except WebSocketDisconnect:
         logger.info("🔌 WebSocket disconnected")
@@ -188,12 +200,14 @@ async def websocket_endpoint(websocket: WebSocket):
         if current_task:
             current_task.cancel()
 
+    finally:
+        if current_task and not current_task.done():
+            current_task.cancel()
+        logger.info("🧹 WebSocket cleanup complete")
+
 
 async def process_message(websocket: WebSocket, message: dict):
     """Process a single message through the pipeline"""
-
-    import time
-    import numpy as np
 
     try:
         user_text = ""
@@ -236,8 +250,8 @@ async def process_message(websocket: WebSocket, message: dict):
         if not user_text:
             return
 
-        # Send response start marker
-        await websocket.send_json({"type": "response_start"})
+        # NO enviar response_start - el frontend original no lo espera
+        # await websocket.send_json({"type": "response_start"})
 
         # Stream LLM -> TTS pipeline
         first_audio_sent = False
@@ -252,7 +266,8 @@ async def process_message(websocket: WebSocket, message: dict):
             t_tts = time.time() - t_tts_start
 
             if audio_bytes:
-                # Send audio to client
+                # Send audio directly as bytes (WAV format)
+                # Frontend expects raw audio bytes, not wrapped in JSON
                 await websocket.send_bytes(audio_bytes)
 
                 if not first_audio_sent:
@@ -283,6 +298,10 @@ if STATIC_DIR.exists():
     @app.get("/index.html")
     async def serve_index():
         return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/test.html")
+    async def serve_test():
+        return FileResponse(STATIC_DIR / "test.html")
 
 
 if __name__ == "__main__":
