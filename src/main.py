@@ -3,8 +3,12 @@ Main Entry Point for Pipecat Voice Pipeline
 FastAPI server with WebSocket support
 """
 
+import sys
+import os
 import asyncio
 import logging
+import time
+import numpy as np
 from contextlib import asynccontextmanager
 from pathlib import Path
 
