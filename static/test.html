@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>WebSocket Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #1a1a1a;
+            color: #0f0;
+            padding: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #log {
+            background: #000;
+            padding: 10px;
+            border: 1px solid #0f0;
+            margin-top: 20px;
+            min-height: 300px;
+        }
+        .success { color: #0f0; }
+        .error { color: #f00; }
+        .info { color: #0ff; }
+    </style>
+</head>
+<body>
+
+<h1>🔌 WebSocket Test</h1>
+<div>
+    <button onclick="testWebSocket()">1. Test WebSocket Connection</button>
+    <button onclick="testMicrophone()">2. Test Microphone</button>
+    <button onclick="testWebSpeech()">3. Test Web Speech API</button>
+    <button onclick="testSendText()">4. Send Test Message</button>
+    <button onclick="clearLog()">Clear Log</button>
+</div>
+
+<div id="log"></div>
+
+<script>
+    let ws = null;
+    const log = document.getElementById('log');
+
+    function addLog(message, className = 'info') {
+        const time = new Date().toLocaleTimeString();
+        const entry = document.createElement('div');
+        entry.className = className;
+        entry.textContent = `[${time}] ${message}`;
+        log.appendChild(entry);
+        log.scrollTop = log.scrollHeight;
+    }
+
+    function clearLog() {
+        log.innerHTML = '';
+    }
+
+    function testWebSocket() {
+        addLog('🔌 Iniciando test de WebSocket...', 'info');
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        addLog(`📍 URL: ${wsUrl}`, 'info');
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            addLog('⚠️ WebSocket ya está abierto. Cerrando...', 'info');
+            ws.close();
+        }
+
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            addLog('✅ WebSocket CONECTADO', 'success');
+            addLog(`📊 ReadyState: ${ws.readyState} (1 = OPEN)`, 'success');
+        };
+
+        ws.onmessage = (event) => {
+            addLog(`📥 Mensaje recibido (${typeof event.data}): ${event.data.byteLength || event.data.length} bytes`, 'success');
+            if (typeof event.data === 'string') {
+                addLog(`   Contenido: ${event.data.substring(0, 100)}`, 'info');
+            }
+        };
+
+        ws.onerror = (error) => {
+            addLog(`❌ Error WebSocket: ${error}`, 'error');
+        };
+
+        ws.onclose = (event) => {
+            addLog(`🔌 WebSocket CERRADO (code: ${event.code}, reason: ${event.reason})`, 'error');
+        };
+    }
+
+    async function testMicrophone() {
+        addLog('🎤 Solicitando permisos de micrófono...', 'info');
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            addLog('✅ Permisos de micrófono concedidos', 'success');
+            const audioTracks = stream.getAudioTracks();
+            addLog(`📊 Pistas de audio: ${audioTracks.length}`, 'success');
+            audioTracks.forEach((track, i) => {
+                addLog(`   Track ${i}: ${track.label} (enabled: ${track.enabled})`, 'info');
+            });
+            stream.getTracks().forEach(track => track.stop());
+            addLog('🛑 Stream detenido', 'info');
+        } catch(error) {
+            addLog(`❌ Error al acceder al micrófono: ${error.name} - ${error.message}`, 'error');
+        }
+    }
+
+    async function testWebSpeech() {
+        addLog('🗣️ Probando Web Speech API...', 'info');
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        if (!SpeechRecognition) {
+            addLog('❌ Web Speech API no soportado en este navegador', 'error');
+            return;
+        }
+
+        addLog('✅ Web Speech API disponible', 'success');
+
+        try {
+            const recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.lang = 'en-US';
+            recognition.interimResults = false;
+
+            recognition.onstart = () => {
+                addLog('🎤 Reconocimiento iniciado. HABLA AHORA...', 'success');
+            };
+
+            recognition.onresult = (event) => {
+                const text = event.results[0][0].transcript;
+                const confidence = event.results[0][0].confidence;
+                addLog(`🗣️ Texto detectado: "${text}" (confianza: ${(confidence * 100).toFixed(1)}%)`, 'success');
+            };
+
+            recognition.onerror = (event) => {
+                addLog(`❌ Error en reconocimiento: ${event.error}`, 'error');
+            };
+
+            recognition.onend = () => {
+                addLog('🛑 Reconocimiento terminado', 'info');
+            };
+
+            addLog('🚀 Iniciando reconocimiento...', 'info');
+            recognition.start();
+
+        } catch(error) {
+            addLog(`❌ Error al iniciar Web Speech: ${error.message}`, 'error');
+        }
+    }
+
+    function testSendText() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addLog('❌ WebSocket no está conectado. Ejecuta Test 1 primero.', 'error');
+            return;
+        }
+
+        const testMessage = {text: "Hello, this is a test message"};
+        addLog(`📤 Enviando mensaje: ${JSON.stringify(testMessage)}`, 'info');
+
+        try {
+            ws.send(JSON.stringify(testMessage));
+            addLog('✅ Mensaje enviado', 'success');
+        } catch(error) {
+            addLog(`❌ Error al enviar: ${error.message}`, 'error');
+        }
+    }
+
+    // Auto-test on load
+    window.onload = () => {
+        addLog('🚀 Página cargada', 'info');
+        addLog(`📍 Location: ${window.location.href}`, 'info');
+        addLog(`📍 Protocol: ${window.location.protocol}`, 'info');
+        addLog(`📍 Host: ${window.location.host}`, 'info');
+    };
+</script>
+
+</body>
+</html>

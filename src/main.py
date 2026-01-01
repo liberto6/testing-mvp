@@ -164,6 +164,8 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 # Receive message from client
                 message = await websocket.receive()
+                logger.info(f"📥 Received message type: {message.get('type')}")
+                logger.debug(f"📥 Full message: {message}")
 
                 # Check if it's a disconnect message
                 if message.get("type") == "websocket.disconnect":

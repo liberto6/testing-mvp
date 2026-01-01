@@ -46,10 +46,22 @@
 
     // 2. Conexión WebSocket
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    console.log("🔌 Conectando WebSocket a:", wsUrl);
+    const ws = new WebSocket(wsUrl);
 
-    ws.onopen = () => { statusText.innerText = "Conectado. Pulsa el botón."; };
-    ws.onclose = () => { statusText.innerText = "Desconectado."; };
+    ws.onopen = () => {
+        console.log("✅ WebSocket ABIERTO");
+        statusText.innerText = "Conectado. Pulsa el botón.";
+    };
+    ws.onclose = () => {
+        console.log("❌ WebSocket CERRADO");
+        statusText.innerText = "Desconectado.";
+    };
+    ws.onerror = (error) => {
+        console.error("❌ Error WebSocket:", error);
+        statusText.innerText = "Error de conexión.";
+    };
 
     // --- COLA DE AUDIO (Audio Queue) ---
     const audioQueue = [];
@@ -133,11 +145,24 @@
     startBtn.onclick = async () => {
     try {
         statusText.innerText = "Configurando...";
-        
+
+        // Solicitar permisos de micrófono primero
+        console.log("🎤 Solicitando permisos de micrófono...");
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            console.log("✅ Permisos de micrófono concedidos");
+            // Detener el stream ya que Web Speech API lo manejará
+            stream.getTracks().forEach(track => track.stop());
+        } catch(permError) {
+            console.error("❌ Error al solicitar permisos:", permError);
+            statusText.innerText = "Permisos de micrófono denegados";
+            return;
+        }
+
         // --- FASE 3: WEB SPEECH API CHECK ---
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         const useWebSpeech = !!SpeechRecognition;
-        
+
         if (useWebSpeech) {
             console.log("🚀 Usando Web Speech API (Modo Rápido)");
             const recognition = new SpeechRecognition();
@@ -147,29 +172,42 @@
             recognition.maxAlternatives = 1;
 
             recognition.onstart = () => {
+                console.log("🎤 Web Speech API iniciada");
                 indicator.className = "indicator listening";
                 statusText.innerText = "Escuchando (Nativo)...";
             };
 
             recognition.onend = () => {
+                console.log("🛑 Web Speech API terminada");
                 // Reiniciar escucha siempre (Continuous listening), excepto si la IA está hablando
                 if (!isAiSpeaking) {
-                    try { recognition.start(); } catch(e) {}
+                    console.log("🔄 Reiniciando reconocimiento...");
+                    try { recognition.start(); } catch(e) {
+                        console.error("❌ Error al reiniciar:", e);
+                    }
                 }
+            };
+
+            recognition.onerror = (event) => {
+                console.error("❌ Error Web Speech API:", event.error);
+                statusText.innerText = `Error: ${event.error}`;
             };
 
             recognition.onresult = (event) => {
                 const text = event.results[0][0].transcript;
                 console.log("🗣️ Detectado:", text);
-                
+                console.log("📊 WebSocket estado:", ws.readyState, "(1 = OPEN)");
+
                 // INTERRUPCIÓN (Barge-in)
                 stopAudio();
-                
+
                 indicator.className = "indicator processing";
                 statusText.innerText = "Procesando...";
-                
+
                 if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({text: text})); // Enviar como JSON explícito si se prefiere, pero el backend espera JSON o Bytes
+                    console.log("📤 Enviando mensaje:", {text: text});
+                    ws.send(JSON.stringify({text: text}));
+                    console.log("✅ Mensaje enviado");
                     // El backend espera: {"text": ...} o bytes.
                     // ws.send(text) envía string, el backend espera JSON parseable?
                     // Revisemos endpoints.py: await websocket.receive() devuelve dict si es json, o bytes/str.
@@ -199,9 +237,16 @@
                 }
             };
 
-            recognition.start();
-            startBtn.style.display = 'none';
-            statusText.innerText = "Sarah lista (Modo Rápido).";
+            console.log("🚀 Iniciando Web Speech Recognition...");
+            try {
+                recognition.start();
+                startBtn.style.display = 'none';
+                statusText.innerText = "Sarah lista (Modo Rápido).";
+                console.log("✅ Recognition iniciado correctamente");
+            } catch(e) {
+                console.error("❌ Error al iniciar recognition:", e);
+                statusText.innerText = "Error al iniciar reconocimiento";
+            }
 
         } else {
             // --- FALLBACK: VAD + AUDIO RAW (Modo Lento) ---
