@@ -215,7 +215,21 @@ async def process_message(websocket: WebSocket, message: dict):
 
         # Handle text input (Web Speech API)
         if "text" in message:
-            user_text = message["text"]
+            # Check if it's a JSON string that needs parsing
+            text_content = message["text"]
+
+            # Try to parse as JSON first (frontend sends JSON.stringify({text: ...}))
+            try:
+                import json
+                parsed = json.loads(text_content)
+                if isinstance(parsed, dict) and "text" in parsed:
+                    user_text = parsed["text"]
+                else:
+                    user_text = text_content
+            except (json.JSONDecodeError, ValueError):
+                # Not JSON, use as-is
+                user_text = text_content
+
             logger.info(f"📨 Received text: '{user_text}'")
 
         # Handle audio input (Whisper STT)
