@@ -161,7 +161,11 @@
 
         // --- FASE 3: WEB SPEECH API CHECK ---
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        const useWebSpeech = !!SpeechRecognition;
+
+        // FORCE VAD MODE: Web Speech API tiene problemas de red en RunPod/proxies
+        // Cambiar a true para habilitar Web Speech API (solo funciona en entornos sin proxy)
+        const forceVADMode = true;
+        const useWebSpeech = !forceVADMode && !!SpeechRecognition;
 
         if (useWebSpeech) {
             console.log("🚀 Usando Web Speech API (Modo Rápido)");
@@ -250,53 +254,68 @@
 
         } else {
             // --- FALLBACK: VAD + AUDIO RAW (Modo Lento) ---
-            console.log("🐢 Web Speech no soportado. Usando VAD + Audio Raw.");
-            
-            ort.env.wasm.numThreads = 1; 
+            console.log("🔊 Usando VAD + Whisper (Modo Local)");
+
+            console.log("⚙️ Configurando ONNX Runtime...");
+            ort.env.wasm.numThreads = 1;
             ort.env.wasm.proxy = false;
             ort.env.wasm.wasmPaths = "static/"; // Apuntar a local
 
-            const stream = await navigator.mediaDevices.getUserMedia({ 
+            console.log("🎤 Obteniendo stream de audio...");
+            const stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
                     autoGainControl: true
-                } 
+                }
             });
+            console.log("✅ Stream de audio obtenido");
 
+            console.log("🤖 Inicializando VAD...");
             const myvad = await vad.MicVAD.new({
                 stream: stream,
                 modelURL: "static/silero_vad.onnx", // Local
-                
+
                 positiveSpeechThreshold: 0.6,
                 negativeSpeechThreshold: 0.4,
                 minSpeechDurationFrames: 4,
                 preSpeechPadFrames: 1,
                 redemptionFrames: 15,
-                
+
                 onSpeechStart: () => {
-                    console.log("VAD: Speech Start");
+                    console.log("🗣️ VAD: Detectando voz...");
                     // INTERRUPCIÓN (Barge-in)
                     stopAudio();
-                    
+
                     indicator.className = "indicator listening";
                     statusText.innerText = "Escuchando...";
                 },
-                
+
                 onSpeechEnd: (audio) => {
+                    console.log(`🎙️ VAD: Voz finalizada (${audio.length} samples)`);
+                    console.log("📊 WebSocket estado:", ws.readyState, "(1 = OPEN)");
+
                     indicator.className = "indicator processing";
                     statusText.innerText = "Procesando...";
-                    
+
                     const int16 = Int16Array.from(audio.map(n => n * 32767));
+                    console.log(`📦 Audio convertido a Int16: ${int16.length} samples`);
+
                     if (ws.readyState === WebSocket.OPEN) {
+                        console.log(`📤 Enviando ${int16.buffer.byteLength} bytes de audio`);
                         ws.send(int16.buffer); // ENVIAR BYTES
+                        console.log("✅ Audio enviado al servidor");
+                    } else {
+                        console.error("❌ WebSocket no está abierto, no se puede enviar");
                     }
                 }
             });
 
+            console.log("🚀 Iniciando VAD...");
             myvad.start();
             startBtn.style.display = 'none';
             statusText.innerText = "Sarah lista (Modo VAD).";
+            console.log("✅ VAD iniciado correctamente");
             
             window.toggleRecognition = (enable) => {
                 if (enable) myvad.start();

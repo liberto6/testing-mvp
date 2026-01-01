@@ -1,7 +1,10 @@
 # 🔧 Guía de Debugging para RunPod
 
-## Problema
-El sistema no procesa la voz del usuario después de presionar el botón "EMPEZAR CLASE".
+## Problema Identificado
+El sistema no procesaba la voz porque Web Speech API falla con error `network` en entornos con proxy (como RunPod).
+
+## Solución Implementada
+El sistema ahora usa **VAD + Whisper (Modo Local)** por defecto, que procesa todo localmente sin depender de servicios externos de Google.
 
 ## Pasos de Diagnóstico
 
@@ -64,12 +67,11 @@ INFO:     connection open
 
 ## Problemas Comunes
 
-### ❌ Web Speech API no funciona
-**Causa**: Navegador no compatible o no tienes HTTPS
+### ❌ Web Speech API falla con error "network"
+**Causa**: Web Speech API de Google no funciona en entornos con proxy (RunPod, etc.)
 **Solución**:
-- Usa Chrome o Edge (no Firefox/Safari)
-- Asegúrate de usar la URL del proxy de RunPod (con HTTPS)
-- Concede permisos de micrófono cuando se soliciten
+- ✅ **YA RESUELTO**: El sistema ahora usa VAD + Whisper local por defecto
+- Si quieres usar Web Speech API en desarrollo local, cambia `forceVADMode = false` en index.html línea 167
 
 ### ❌ WebSocket no conecta
 **Causa**: URL incorrecta o servidor no está escuchando
@@ -97,30 +99,38 @@ INFO:     connection open
 
 ## Logs Esperados (Flujo Completo)
 
-### Navegador (Console)
+### Navegador (Console) - MODO VAD (NUEVO)
 ```
 🔌 Conectando WebSocket a: wss://...
 ✅ WebSocket ABIERTO
 🎤 Solicitando permisos de micrófono...
 ✅ Permisos de micrófono concedidos
-🚀 Usando Web Speech API (Modo Rápido)
-🎤 Web Speech API iniciada
-🗣️ Detectado: hello how are you
+🔊 Usando VAD + Whisper (Modo Local)
+⚙️ Configurando ONNX Runtime...
+🎤 Obteniendo stream de audio...
+✅ Stream de audio obtenido
+🤖 Inicializando VAD...
+🚀 Iniciando VAD...
+✅ VAD iniciado correctamente
+🗣️ VAD: Detectando voz...
+🎙️ VAD: Voz finalizada (48000 samples)
 📊 WebSocket estado: 1 (1 = OPEN)
-📤 Enviando mensaje: {text: "hello how are you"}
-✅ Mensaje enviado
+📦 Audio convertido a Int16: 48000 samples
+📤 Enviando 96000 bytes de audio
+✅ Audio enviado al servidor
 ```
 
-### Servidor (Terminal)
+### Servidor (Terminal) - MODO VAD
 ```
 INFO:     100.64.1.35:37710 - "WebSocket /ws" [accepted]
 INFO:     connection open
 📥 Received message type: websocket.receive
-📨 Received text: 'hello how are you'
+🎤 Processing audio...
+📝 Transcribed: 'hello how are you' (0.85s)
 🤖 LLM: 'I'm doing great, thanks for asking...'
 🔊 TTS: 35 chars in 0.42s
-⚡ Time to first audio: 1.23s
-✅ Total latency: 2.45s
+⚡ Time to first audio: 1.53s
+✅ Total latency: 2.65s
 ```
 
 ## Comandos Útiles
