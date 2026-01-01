@@ -12,6 +12,14 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
+# Check for CONFIG_PATH environment variable
+config_path = os.getenv("CONFIG_PATH")
+if config_path:
+    print(f"📋 Using configuration from: {config_path}")
+    if not os.path.exists(config_path):
+        print(f"❌ Error: Config file not found: {config_path}")
+        sys.exit(1)
+
 # Now import and run
 import uvicorn
 

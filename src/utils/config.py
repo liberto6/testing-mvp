@@ -151,16 +151,19 @@ class ConfigManager:
     def __init__(self, config_path: Optional[str] = None, auto_optimize: bool = True):
         self.config_path = config_path
         self.config = PipelineConfig()
+        self.from_yaml = False  # Track if loaded from YAML
 
         # Load from file if provided
         if config_path and os.path.exists(config_path):
             self.load_from_yaml(config_path)
+            self.from_yaml = True
         else:
             # Load from environment variables
             self.load_from_env()
 
-        # Auto-optimize based on GPU if enabled
-        if auto_optimize:
+        # Auto-optimize based on GPU if enabled AND not from YAML
+        # If loaded from YAML, respect the explicit config
+        if auto_optimize and not self.from_yaml:
             self.auto_optimize_for_gpu()
 
         logger.info("✅ Configuration loaded successfully")

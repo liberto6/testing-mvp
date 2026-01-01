@@ -40,7 +40,10 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting Pipecat Voice Pipeline Server...")
 
     # Load configuration
-    config_path = None  # Auto-detect or use environment
+    config_path = os.getenv("CONFIG_PATH", None)  # Check environment variable
+    if config_path:
+        logger.info(f"📋 Using config from: {config_path}")
+
     config_manager = get_config_manager(config_path=config_path, auto_optimize=True)
     config_manager.print_config()
 
