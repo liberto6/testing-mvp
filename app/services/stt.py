@@ -3,8 +3,8 @@ from faster_whisper import WhisperModel
 from app.core.executor import executor
 from app.core.logging import logger
 
-print(f"Cargando Whisper (STT) en CPU...")
-stt_model = WhisperModel("tiny", device="cpu", compute_type="int8")  # Tiny es 3x más rápido que small
+print(f"Cargando Whisper (STT) en GPU...")
+stt_model = WhisperModel("tiny", device="cuda", compute_type="float16")  # GPU es 5-10x más rápido que CPU
 
 async def run_stt(audio_np):
     """Ejecuta Whisper en un hilo separado para no bloquear el loop de eventos."""
