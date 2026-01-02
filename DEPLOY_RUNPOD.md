@@ -36,7 +36,9 @@ git stash
 git pull origin feature/migracion_orquestador_pipecat
 ```
 
-### 2. Descargar archivos WASM
+### 2. Descargar archivos WASM y modelo VAD
+
+**IMPORTANTE**: El archivo `silero_vad.onnx` puede estar corrupto en RunPod. Este script lo descarga de nuevo:
 
 ```bash
 chmod +x download_wasm_files.sh
@@ -45,6 +47,10 @@ chmod +x download_wasm_files.sh
 
 Deberías ver:
 ```
+1️⃣ Verificando modelo silero_vad.onnx...
+✅ silero_vad.onnx descargado
+
+2️⃣ Descargando archivos WASM de ONNX Runtime...
 ✅ ort-wasm-simd-threaded.jsep.mjs descargado
 ✅ ort-wasm-simd-threaded.mjs descargado
 ✅ ort-wasm-simd.mjs descargado
@@ -138,16 +144,24 @@ Cuando hables, deberías ver:
 # NO: python run.py  ❌
 ```
 
-### Error: "silero_vad.onnx not found"
+### Error: "Can't create a session... protobuf parsing failed"
 
-**Solución**: Verifica que el archivo existe:
+**Causa**: El archivo `silero_vad.onnx` está corrupto o incompleto.
+
+**Solución**: Ejecuta el script de descarga que lo descarga de nuevo:
 ```bash
-ls -lh static/silero_vad.onnx
+./download_wasm_files.sh
+```
 
-# Si no existe, descárgalo:
+O manualmente:
+```bash
 cd static
-wget https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.onnx
+rm silero_vad.onnx  # Eliminar el corrupto
+curl -L -o silero_vad.onnx https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.onnx
 cd ..
+
+# Verificar tamaño (debe ser ~290KB)
+ls -lh static/silero_vad.onnx
 ```
 
 ### VAD no detecta voz

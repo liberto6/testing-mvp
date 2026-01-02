@@ -1,9 +1,36 @@
 #!/bin/bash
-# Script para descargar archivos WASM necesarios para ONNX Runtime
+# Script para descargar archivos WASM necesarios para ONNX Runtime y modelo VAD
 
-echo "📦 Descargando archivos WASM de ONNX Runtime..."
+echo "📦 Descargando archivos necesarios para VAD..."
 
 cd static
+
+# 1. Descargar modelo VAD si no existe o está corrupto
+echo ""
+echo "1️⃣ Verificando modelo silero_vad.onnx..."
+if [ -f "silero_vad.onnx" ]; then
+    SIZE=$(stat -f%z "silero_vad.onnx" 2>/dev/null || stat -c%s "silero_vad.onnx" 2>/dev/null)
+    if [ "$SIZE" -lt 200000 ]; then
+        echo "⚠️  Archivo corrupto (solo $SIZE bytes), descargando de nuevo..."
+        rm silero_vad.onnx
+    else
+        echo "✓ silero_vad.onnx existe y parece válido ($SIZE bytes)"
+    fi
+fi
+
+if [ ! -f "silero_vad.onnx" ]; then
+    echo "⬇️  Descargando silero_vad.onnx..."
+    curl -sL "https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.onnx" -o "silero_vad.onnx"
+    if [ $? -eq 0 ]; then
+        echo "✅ silero_vad.onnx descargado"
+    else
+        echo "❌ Error descargando silero_vad.onnx"
+    fi
+fi
+
+# 2. Descargar archivos WASM
+echo ""
+echo "2️⃣ Descargando archivos WASM de ONNX Runtime..."
 
 # Version de ONNX Runtime que usa vad-web
 VERSION="1.19.0"
