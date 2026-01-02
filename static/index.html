@@ -259,7 +259,11 @@
             console.log("⚙️ Configurando ONNX Runtime...");
             ort.env.wasm.numThreads = 1;
             ort.env.wasm.proxy = false;
-            ort.env.wasm.wasmPaths = "static/"; // Apuntar a local
+
+            // Usar ruta absoluta para archivos WASM (fix para módulos ES)
+            const basePath = window.location.origin + '/static/';
+            ort.env.wasm.wasmPaths = basePath;
+            console.log(`📁 WASM path configurado: ${basePath}`);
 
             console.log("🎤 Obteniendo stream de audio...");
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -274,7 +278,7 @@
             console.log("🤖 Inicializando VAD...");
             const myvad = await vad.MicVAD.new({
                 stream: stream,
-                modelURL: "static/silero_vad.onnx", // Local
+                modelURL: basePath + "silero_vad.onnx",
 
                 positiveSpeechThreshold: 0.6,
                 negativeSpeechThreshold: 0.4,
